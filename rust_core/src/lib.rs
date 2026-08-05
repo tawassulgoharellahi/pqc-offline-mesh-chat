@@ -184,3 +184,4 @@ impl ChatSession {
     }
 }
 mod tests;
+pub mod mesh_protocol;

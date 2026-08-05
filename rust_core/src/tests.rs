@@ -25,3 +25,31 @@ use crate::*;
         let decrypted = bob_session.decrypt_message(encrypted).unwrap();
         assert_eq!(decrypted, "Hello Bob!");
     }
+
+    use crate::mesh_protocol::*;
+
+    #[test]
+    fn test_chunking_and_reassembly() {
+        let engine = ChunkingEngine::new(500); // 500 byte MTU
+        let dummy_payload = vec![0x42; 2500]; // 2500 bytes of data
+        
+        let chunks = engine.split_message(dummy_payload.clone(), 10);
+        
+        // 2500 bytes / (500 - 21) = 2500 / 479 = 5.21 -> 6 chunks
+        assert_eq!(chunks.len(), 6);
+        
+        let buffer = ReassemblyBuffer::new();
+        let mut reassembled = None;
+        
+        for chunk in chunks {
+            // Serialize and deserialize to test wire format
+            let data = serialize_chunk(&chunk);
+            let parsed_chunk = deserialize_chunk(data).unwrap();
+            
+            if let Some(payload) = buffer.add_chunk(parsed_chunk).unwrap() {
+                reassembled = Some(payload);
+            }
+        }
+        
+        assert_eq!(reassembled.unwrap(), dummy_payload);
+    }
