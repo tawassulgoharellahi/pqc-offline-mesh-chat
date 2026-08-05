@@ -1,10 +1,10 @@
-# PQC Offline Mesh Chat 🔒📱
+# PQC Offline Mesh Chat
 
 A serverless, offline peer-to-peer (P2P) Bluetooth Low Energy (BLE) mesh messaging application secured by **Post-Quantum Cryptography (PQC)**.
 
 ---
 
-## 🌟 Overview
+## Overview
 
 Modern messaging applications rely on centralized servers and classical public-key infrastructure (like RSA or ECC), which are vulnerable to future quantum computing attacks ("Harvest Now, Decrypt Later"). 
 
@@ -18,7 +18,7 @@ Modern messaging applications rely on centralized servers and classical public-k
 
 ---
 
-## 🛡️ Key Cryptographic & Network Features
+## Key Cryptographic & Network Features
 
 - **Hybrid Post-Quantum Key Exchange:** Combines classical **X25519** ECDH with **ML-KEM-768 (Kyber-768)** for quantum-resistant session secret derivation.
 - **Post-Quantum Digital Signatures:** Uses **ML-DSA (Dilithium)** for authenticating identity public keys and message payloads.
@@ -28,7 +28,7 @@ Modern messaging applications rely on centralized servers and classical public-k
 
 ---
 
-## 📁 Repository Structure
+## Repository Structure
 
 ```
 offline-pqc/
@@ -52,7 +52,7 @@ offline-pqc/
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -90,6 +90,6 @@ npx react-native run-android
 
 ---
 
-## 📜 License
+## License
 
 Distributed under the MIT License. See `LICENSE` for details.
