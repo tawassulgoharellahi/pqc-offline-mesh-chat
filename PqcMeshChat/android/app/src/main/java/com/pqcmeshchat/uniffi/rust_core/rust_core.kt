@@ -731,6 +731,8 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -778,6 +780,8 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_rust_core_fn_constructor_identitykeys_generate(uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
+    fun uniffi_rust_core_fn_method_identitykeys_export_public_keys_base64(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_rust_core_fn_method_identitykeys_get_dilithium_public_key(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_rust_core_fn_method_identitykeys_get_kyber_public_key(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
@@ -926,6 +930,8 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_rust_core_checksum_method_chunkingengine_split_message(
     ): Short
+    fun uniffi_rust_core_checksum_method_identitykeys_export_public_keys_base64(
+    ): Short
     fun uniffi_rust_core_checksum_method_identitykeys_get_dilithium_public_key(
     ): Short
     fun uniffi_rust_core_checksum_method_identitykeys_get_kyber_public_key(
@@ -981,6 +987,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_rust_core_checksum_method_chunkingengine_split_message() != 52717.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_rust_core_checksum_method_identitykeys_export_public_keys_base64() != 7476.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_rust_core_checksum_method_identitykeys_get_dilithium_public_key() != 1410.toShort()) {
@@ -1876,6 +1885,8 @@ public object FfiConverterTypeChunkingEngine: FfiConverter<ChunkingEngine, Point
 
 public interface IdentityKeysInterface {
     
+    fun `exportPublicKeysBase64`(): kotlin.String
+    
     fun `getDilithiumPublicKey`(): kotlin.ByteArray
     
     fun `getKyberPublicKey`(): kotlin.ByteArray
@@ -1965,6 +1976,18 @@ open class IdentityKeys: Disposable, AutoCloseable, IdentityKeysInterface {
             UniffiLib.INSTANCE.uniffi_rust_core_fn_clone_identitykeys(pointer!!, status)
         }
     }
+
+    override fun `exportPublicKeysBase64`(): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_rust_core_fn_method_identitykeys_export_public_keys_base64(
+        it, _status)
+}
+    }
+    )
+    }
+    
 
     override fun `getDilithiumPublicKey`(): kotlin.ByteArray {
             return FfiConverterByteArray.lift(

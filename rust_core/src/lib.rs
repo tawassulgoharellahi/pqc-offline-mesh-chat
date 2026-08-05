@@ -80,6 +80,25 @@ impl IdentityKeys {
     pub fn get_dilithium_public_key(&self) -> Vec<u8> {
         self.dilithium_pk.clone()
     }
+    
+    pub fn export_public_keys_base64(&self) -> String {
+        use base64::engine::general_purpose::STANDARD;
+        use base64::Engine;
+        use serde::{Serialize, Deserialize};
+        
+        #[derive(Serialize, Deserialize)]
+        struct PublicKeysPayload {
+            x25519: String,
+            kyber: String,
+        }
+        
+        let payload = PublicKeysPayload {
+            x25519: STANDARD.encode(&self.x25519_pk),
+            kyber: STANDARD.encode(&self.kyber_pk),
+        };
+        
+        serde_json::to_string(&payload).unwrap_or_default()
+    }
 }
 
 // Hybrid Handshake
