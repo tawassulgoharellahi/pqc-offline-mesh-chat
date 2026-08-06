@@ -14,6 +14,8 @@ import {
   Platform
 } from 'react-native';
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
+import QRCode from 'react-native-qrcode-svg';
+import { Camera, useCameraDevice, useCodeScanner } from 'react-native-vision-camera';
 
 const { CryptoModule, BLEMeshModule } = NativeModules;
 const bleEmitter = new NativeEventEmitter(BLEMeshModule);
@@ -35,6 +37,28 @@ function App(): React.JSX.Element {
   const [targetDevice, setTargetDevice] = useState(''); // E.g. "00:11:22:33:44:55"
   
   const [handshakeDone, setHandshakeDone] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  
+  const device = useCameraDevice('back');
+
+  const codeScanner = useCodeScanner({
+    codeTypes: ['qr'],
+    onCodeScanned: (codes) => {
+      if (codes.length > 0 && codes[0].value) {
+        setTheirKeys(codes[0].value);
+        setIsScanning(false);
+      }
+    }
+  });
+
+  const startScanning = async () => {
+    const permission = await Camera.requestCameraPermission();
+    if (permission === 'granted') {
+      setIsScanning(true);
+    } else {
+      Alert.alert("Permission Denied", "Camera permission is required to scan QR codes.");
+    }
+  };
 
   useEffect(() => {
     // Listen for incoming reassembled messages from BLEMeshModule
@@ -123,6 +147,23 @@ function App(): React.JSX.Element {
     }
   };
 
+  if (isScanning) {
+    if (device == null) return <SafeAreaView style={styles.container}><Text>No Camera Device Found</Text><Button title="Back" onPress={() => setIsScanning(false)} /></SafeAreaView>;
+    return (
+      <View style={StyleSheet.absoluteFill}>
+        <Camera
+          style={StyleSheet.absoluteFill}
+          device={device}
+          isActive={true}
+          codeScanner={codeScanner}
+        />
+        <View style={{ position: 'absolute', bottom: 50, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.5)', padding: 10, borderRadius: 10 }}>
+          <Button title="Cancel Scan" onPress={() => setIsScanning(false)} color="#EF4444" />
+        </View>
+      </View>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container} edges={['top', 'bottom', 'left', 'right']}>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
@@ -137,8 +178,12 @@ function App(): React.JSX.Element {
           <Text style={styles.sectionTitle}>1. My Identity</Text>
           <Button title="Generate PQC Keys" onPress={generateKeys} />
           {myKeys ? (
-            <View style={{marginTop: 12}}>
-              <Text style={styles.label}>Copy these keys and give them to your friend:</Text>
+            <View style={{marginTop: 12, alignItems: 'center'}}>
+              <Text style={styles.label}>Show this QR code to your friend:</Text>
+              <View style={{ padding: 16, backgroundColor: 'white', borderRadius: 8, elevation: 4 }}>
+                <QRCode value={myKeys} size={250} />
+              </View>
+              <Text style={[styles.label, {marginTop: 8}]}>Or copy manual key:</Text>
               <TextInput style={styles.keyBox} multiline value={myKeys} editable={false} />
             </View>
           ) : null}
@@ -147,9 +192,13 @@ function App(): React.JSX.Element {
         {/* Step 2: Key Exchange */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>2. Key Exchange</Text>
-          <Text style={styles.label}>Paste your friend's keys here:</Text>
+          <View style={{marginBottom: 12}}>
+            <Button title="Scan Partner's QR Code" onPress={startScanning} color="#3B82F6" />
+          </View>
+          
+          <Text style={styles.label}>Or paste your friend's keys manually:</Text>
           <TextInput 
-            style={[styles.keyBox, { height: 60 }]} 
+            style={[styles.keyBox, { height: 60, marginBottom: 8 }]} 
             multiline 
             placeholder='{"x25519":"...","kyber":"..."}' 
             value={theirKeys}
