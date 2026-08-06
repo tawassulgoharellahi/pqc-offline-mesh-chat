@@ -10,8 +10,7 @@ import {
   NativeModules,
   NativeEventEmitter,
   TextInput,
-  Alert,
-  Platform
+  Alert
 } from 'react-native';
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import QRCode from 'react-native-qrcode-svg';
@@ -31,10 +30,14 @@ function App(): React.JSX.Element {
   const isDarkMode = useColorScheme() === 'dark';
   
   const [myKeys, setMyKeys] = useState<string>('');
+  const [myMac, setMyMac] = useState<string>('');
+  const [qrPayload, setQrPayload] = useState<string>('');
+  
   const [theirKeys, setTheirKeys] = useState<string>('');
+  const [targetDevice, setTargetDevice] = useState<string>(''); // Auto-stored during QR scan
+  
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
-  const [targetDevice, setTargetDevice] = useState(''); // E.g. "00:11:22:33:44:55"
   
   const [handshakeDone, setHandshakeDone] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
@@ -45,8 +48,17 @@ function App(): React.JSX.Element {
     codeTypes: ['qr'],
     onCodeScanned: (codes) => {
       if (codes.length > 0 && codes[0].value) {
-        setTheirKeys(codes[0].value);
+        const scannedValue = codes[0].value;
+        try {
+          const parsed = JSON.parse(scannedValue);
+          if (parsed.keys) setTheirKeys(parsed.keys);
+          else setTheirKeys(scannedValue);
+          if (parsed.mac) setTargetDevice(parsed.mac);
+        } catch (e) {
+          setTheirKeys(scannedValue);
+        }
         setIsScanning(false);
+        Alert.alert("QR Code Scanned", "Partner's PQC keys & MAC address stored automatically!");
       }
     }
   });
@@ -61,9 +73,8 @@ function App(): React.JSX.Element {
   };
 
   useEffect(() => {
-    // Listen for incoming reassembled messages from BLEMeshModule
     const subscription = bleEmitter.addListener('onMessageReceived', async (event) => {
-      const { senderAddress, payload } = event; // Payload here is Base64 ciphertext
+      const { senderAddress, payload } = event;
       
       try {
         if (!handshakeDone) {
@@ -71,7 +82,6 @@ function App(): React.JSX.Element {
           return;
         }
         
-        // Decrypt the ciphertext
         const plaintext = await CryptoModule.decryptMessage(payload);
         
         setMessages(prev => [...prev, {
@@ -92,7 +102,15 @@ function App(): React.JSX.Element {
     try {
       await CryptoModule.generateKeys();
       const base64Keys = await CryptoModule.exportPublicKeysBase64();
+      let mac = '';
+      try {
+        mac = await BLEMeshModule.getMacAddress();
+      } catch (err) {
+        console.warn("Could not retrieve MAC address:", err);
+      }
       setMyKeys(base64Keys);
+      setMyMac(mac);
+      setQrPayload(JSON.stringify({ keys: base64Keys, mac }));
     } catch (e: any) {
       Alert.alert("Key Gen Error", e.message);
     }
@@ -109,7 +127,7 @@ function App(): React.JSX.Element {
 
   const initiateHandshake = async () => {
     if (!theirKeys) {
-      Alert.alert("Error", "Please paste the opponent's public keys first.");
+      Alert.alert("Error", "No partner keys available. Please scan partner's QR code first.");
       return;
     }
     try {
@@ -122,17 +140,18 @@ function App(): React.JSX.Element {
   };
 
   const sendMessage = async () => {
-    if (!inputText || !targetDevice) return;
+    if (!inputText) return;
+    if (!targetDevice) {
+      Alert.alert("Error", "Target MAC address not found. Please scan partner's QR code first!");
+      return;
+    }
     if (!handshakeDone) {
       Alert.alert("Error", "You must complete the key exchange handshake first!");
       return;
     }
     
     try {
-      // 1. Encrypt the plaintext using the PQC Session
       const ciphertextBase64 = await CryptoModule.encryptMessage(inputText);
-      
-      // 2. Transmit the ciphertext chunks over BLE
       await BLEMeshModule.sendMessageToDevice(targetDevice, ciphertextBase64);
       
       setMessages(prev => [...prev, {
@@ -148,7 +167,12 @@ function App(): React.JSX.Element {
   };
 
   if (isScanning) {
-    if (device == null) return <SafeAreaView style={styles.container}><Text>No Camera Device Found</Text><Button title="Back" onPress={() => setIsScanning(false)} /></SafeAreaView>;
+    if (device == null) return (
+      <SafeAreaView style={styles.container}>
+        <Text>No Camera Device Found</Text>
+        <Button title="Back" onPress={() => setIsScanning(false)} />
+      </SafeAreaView>
+    );
     return (
       <View style={StyleSheet.absoluteFill}>
         <Camera
@@ -177,14 +201,12 @@ function App(): React.JSX.Element {
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>1. My Identity</Text>
           <Button title="Generate PQC Keys" onPress={generateKeys} />
-          {myKeys ? (
-            <View style={{marginTop: 12, alignItems: 'center'}}>
+          {qrPayload ? (
+            <View style={{marginTop: 16, alignItems: 'center'}}>
               <Text style={styles.label}>Show this QR code to your friend:</Text>
               <View style={{ padding: 16, backgroundColor: 'white', borderRadius: 8, elevation: 4 }}>
-                <QRCode value={myKeys} size={250} />
+                <QRCode value={qrPayload} size={240} />
               </View>
-              <Text style={[styles.label, {marginTop: 8}]}>Or copy manual key:</Text>
-              <TextInput style={styles.keyBox} multiline value={myKeys} editable={false} />
             </View>
           ) : null}
         </View>
@@ -196,15 +218,16 @@ function App(): React.JSX.Element {
             <Button title="Scan Partner's QR Code" onPress={startScanning} color="#3B82F6" />
           </View>
           
-          <Text style={styles.label}>Or paste your friend's keys manually:</Text>
-          <TextInput 
-            style={[styles.keyBox, { height: 60, marginBottom: 8 }]} 
-            multiline 
-            placeholder='{"x25519":"...","kyber":"..."}' 
-            value={theirKeys}
-            onChangeText={setTheirKeys}
-          />
-          <View style={{marginTop: 8}}>
+          {theirKeys ? (
+            <View style={styles.statusBox}>
+              <Text style={styles.statusText}>✓ Partner Public Keys: Auto-Stored</Text>
+              <Text style={styles.statusText}>✓ Partner MAC Address: {targetDevice || 'Auto-Detected'}</Text>
+            </View>
+          ) : (
+            <Text style={styles.placeholderText}>Scan partner's QR code to automatically exchange keys & MAC address.</Text>
+          )}
+
+          <View style={{marginTop: 12}}>
             <Button title="Initiate Secure Handshake" onPress={initiateHandshake} color="#8B5CF6" />
           </View>
           {handshakeDone && <Text style={styles.successText}>✓ Session Secured</Text>}
@@ -212,33 +235,31 @@ function App(): React.JSX.Element {
 
         {/* Step 3: Mesh Node */}
         <View style={styles.card}>
-           <Text style={styles.sectionTitle}>3. Start Mesh Network</Text>
+          <Text style={styles.sectionTitle}>3. Start Mesh Network</Text>
           <Button title="Start BLE GATT Server & Advertising" onPress={startAdvertising} color="#10B981" />
         </View>
 
         {/* Chat Interface */}
         <View style={styles.chatArea}>
           <Text style={styles.sectionTitle}>Encrypted Chat</Text>
-          {messages.map(m => (
-            <View key={m.id} style={[styles.messageBubble, m.isMine ? styles.myMessage : styles.theirMessage]}>
-              <Text style={styles.messageSender}>{m.sender}</Text>
-              <Text style={styles.messageText}>{m.text}</Text>
-            </View>
-          ))}
+          {messages.length === 0 ? (
+            <Text style={styles.placeholderText}>No messages yet.</Text>
+          ) : (
+            messages.map(m => (
+              <View key={m.id} style={[styles.messageBubble, m.isMine ? styles.myMessage : styles.theirMessage]}>
+                <Text style={styles.messageSender}>{m.sender}</Text>
+                <Text style={styles.messageText}>{m.text}</Text>
+              </View>
+            ))
+          )}
         </View>
       </ScrollView>
 
       {/* Input Footer */}
       <View style={styles.inputArea}>
-        <TextInput 
-          style={styles.input} 
-          placeholder="Target BLE MAC (e.g. 00:11:22...)" 
-          value={targetDevice}
-          onChangeText={setTargetDevice}
-        />
         <View style={styles.row}>
           <TextInput 
-            style={[styles.input, {flex: 1, marginBottom: 0, marginRight: 8}]} 
+            style={[styles.input, {flex: 1, marginRight: 8}]} 
             placeholder="Type secret message..." 
             value={inputText}
             onChangeText={setInputText}
@@ -257,8 +278,10 @@ const styles = StyleSheet.create({
   content: { padding: 16, flex: 1 },
   card: { marginBottom: 16, padding: 16, backgroundColor: '#FFFFFF', borderRadius: 8, elevation: 2 },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', marginBottom: 12, color: '#111827' },
-  label: { fontSize: 12, color: '#4B5563', marginBottom: 4 },
-  keyBox: { fontFamily: 'monospace', fontSize: 10, color: '#6B7280', backgroundColor: '#F9FAFB', padding: 8, borderRadius: 4, borderWidth: 1, borderColor: '#E5E7EB', maxHeight: 80 },
+  label: { fontSize: 13, color: '#4B5563', marginBottom: 8, fontWeight: '500' },
+  statusBox: { backgroundColor: '#ECFDF5', padding: 10, borderRadius: 6, borderWidth: 1, borderColor: '#A7F3D0', marginBottom: 8 },
+  statusText: { fontSize: 12, color: '#065F46', fontWeight: '600' },
+  placeholderText: { fontSize: 12, color: '#9CA3AF', fontStyle: 'italic', marginVertical: 4 },
   successText: { color: '#10B981', fontWeight: 'bold', marginTop: 8, textAlign: 'center' },
   chatArea: { marginTop: 8, paddingBottom: 40 },
   messageBubble: { padding: 12, borderRadius: 12, marginBottom: 8, maxWidth: '85%' },
@@ -268,7 +291,7 @@ const styles = StyleSheet.create({
   messageText: { fontSize: 16, color: '#FFFFFF' },
   inputArea: { padding: 16, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderColor: '#E5E7EB' },
   row: { flexDirection: 'row', alignItems: 'center' },
-  input: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 6, padding: 10, marginBottom: 8, backgroundColor: '#F9FAFB' }
+  input: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 6, padding: 10, backgroundColor: '#F9FAFB' }
 });
 
 export default function AppWrapper() {

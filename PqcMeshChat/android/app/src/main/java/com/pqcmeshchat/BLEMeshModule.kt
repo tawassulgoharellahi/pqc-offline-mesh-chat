@@ -28,6 +28,25 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         return "BLEMeshModule"
     }
 
+    @ReactMethod
+    fun getMacAddress(promise: Promise) {
+        try {
+            var mac = bluetoothAdapter?.address
+            if (mac == null || mac == "02:00:00:00:00:00") {
+                val secureMac = android.provider.Settings.Secure.getString(
+                    reactApplicationContext.contentResolver,
+                    "bluetooth_address"
+                )
+                if (!secureMac.isNullOrEmpty()) {
+                    mac = secureMac
+                }
+            }
+            promise.resolve(mac ?: "02:00:00:00:00:00")
+        } catch (e: Exception) {
+            promise.resolve("02:00:00:00:00:00")
+        }
+    }
+
     private fun sendEvent(eventName: String, params: WritableMap?) {
         reactApplicationContext
             .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
