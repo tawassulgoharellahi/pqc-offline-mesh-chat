@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import {
-  SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -12,9 +11,9 @@ import {
   NativeEventEmitter,
   TextInput,
   Alert,
-  KeyboardAvoidingView,
   Platform
 } from 'react-native';
+import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 
 const { CryptoModule, BLEMeshModule } = NativeModules;
 const bleEmitter = new NativeEventEmitter(BLEMeshModule);
@@ -125,17 +124,13 @@ function App(): React.JSX.Element {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom', 'left', 'right']}>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
       <View style={styles.header}>
         <Text style={styles.title}>PQC Mesh Chat</Text>
       </View>
       
-      <KeyboardAvoidingView 
-        style={{ flex: 1 }} 
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <ScrollView style={styles.content}>
+      <ScrollView style={styles.content}>
         
         {/* Step 1: My Identity */}
         <View style={styles.card}>
@@ -202,7 +197,6 @@ function App(): React.JSX.Element {
           <Button title="Send" onPress={sendMessage} />
         </View>
       </View>
-      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -223,9 +217,15 @@ const styles = StyleSheet.create({
   theirMessage: { backgroundColor: '#E5E7EB', alignSelf: 'flex-start', borderBottomLeftRadius: 2 },
   messageSender: { fontSize: 10, color: '#D1D5DB', marginBottom: 4 },
   messageText: { fontSize: 16, color: '#FFFFFF' },
-  inputArea: { padding: 16, paddingBottom: 24, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderColor: '#E5E7EB' },
+  inputArea: { padding: 16, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderColor: '#E5E7EB' },
   row: { flexDirection: 'row', alignItems: 'center' },
   input: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 6, padding: 10, marginBottom: 8, backgroundColor: '#F9FAFB' }
 });
 
-export default App;
+export default function AppWrapper() {
+  return (
+    <SafeAreaProvider>
+      <App />
+    </SafeAreaProvider>
+  );
+}
