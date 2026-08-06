@@ -57,8 +57,8 @@ class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             val theirX25519Base64 = json.getString("x25519")
             val theirKyberBase64 = json.getString("kyber")
             
-            val theirX25519Bytes = Base64.decode(theirX25519Base64, Base64.DEFAULT).toList()
-            val theirKyberBytes = Base64.decode(theirKyberBase64, Base64.DEFAULT).toList()
+            val theirX25519Bytes = Base64.decode(theirX25519Base64, Base64.DEFAULT)
+            val theirKyberBytes = Base64.decode(theirKyberBase64, Base64.DEFAULT)
 
             // Derive master key
             val masterKey = performHybridHandshake(keys, theirX25519Bytes, theirKyberBytes)
@@ -82,7 +82,7 @@ class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             }
             
             val ciphertextBytes = session.encryptMessage(plaintext)
-            val ciphertextBase64 = Base64.encodeToString(ciphertextBytes.toByteArray(), Base64.NO_WRAP)
+            val ciphertextBase64 = Base64.encodeToString(ciphertextBytes, Base64.NO_WRAP)
             promise.resolve(ciphertextBase64)
         } catch (e: Exception) {
             promise.reject("ENCRYPTION_FAILED", e)
@@ -98,7 +98,7 @@ class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
                 return
             }
             
-            val ciphertextBytes = Base64.decode(ciphertextBase64, Base64.DEFAULT).toList()
+            val ciphertextBytes = Base64.decode(ciphertextBase64, Base64.DEFAULT)
             val plaintext = session.decryptMessage(ciphertextBytes)
             promise.resolve(plaintext)
         } catch (e: Exception) {

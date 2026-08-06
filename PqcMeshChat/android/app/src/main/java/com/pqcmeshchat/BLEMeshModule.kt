@@ -16,14 +16,13 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     private val CHAR_UUID = UUID.fromString("0000FF02-0000-1000-8000-00805F9B34FB")
     private val parcelUuid = ParcelUuid(SERVICE_UUID)
 
-    private var bluetoothManager: BluetoothManager = reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
-    private var bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
-    
+    private val bluetoothManager: BluetoothManager = reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+    private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
     private var gattServer: BluetoothGattServer? = null
     
-    // Rust UniFFI instances
-    private val reassemblyBuffer = ReassemblyBuffer()
-    private val chunkingEngine = ChunkingEngine(500) // 500 byte MTU
+    // Hardcode 250 MTU for POC
+    private val chunkingEngine = ChunkingEngine(250.toUShort())
+    private val activeConnections = mutableMapOf<String, BluetoothDevice>()
 
     override fun getName(): String {
         return "BLEMeshModule"
@@ -59,7 +58,8 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 if (characteristic.uuid == CHAR_UUID) {
                     try {
                         // Pass chunk to Rust
-                        val chunk = deserializeChunk(value.toList())
+                        val chunk = deserializeChunk(value)
+                        val reassemblyBuffer = ReassemblyBuffer() // Note: Should ideally be persistent
                         val reassembled = reassemblyBuffer.addChunk(chunk)
                         
                         if (reassembled != null) {
@@ -68,7 +68,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                             map.putString("senderAddress", device.address)
                             
                             // Try to parse as String for this PoC (in reality it's encrypted ciphertext)
-                            val messageStr = String(reassembled.toByteArray(), Charsets.UTF_8)
+                            val messageStr = String(reassembled, Charsets.UTF_8)
                             map.putString("payload", messageStr)
                             
                             sendEvent("onMessageReceived", map)
@@ -129,7 +129,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         }
         
         // Use Rust chunking engine to split the payload
-        val chunks = chunkingEngine.splitMessage(message.toByteArray().toList(), 10)
+        val chunks = chunkingEngine.splitMessage(message.toByteArray(), 10.toUByte())
         
         if (chunks.isEmpty()) {
             promise.reject("CHUNKING_FAILED", "Failed to chunk message")
@@ -174,7 +174,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     
                     if (characteristic != null) {
                         val serializedChunk = serializeChunk(chunks[currentChunkIndex])
-                        characteristic.value = serializedChunk.toByteArray()
+                        characteristic.value = serializedChunk
                         characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                         gatt.writeCharacteristic(characteristic)
                     }
