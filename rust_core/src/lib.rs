@@ -112,24 +112,28 @@ pub fn perform_hybrid_handshake(
         return Err(CryptoError::InvalidKeyLength);
     }
     
-    // We would encapsulate a shared secret to their kyber PK.
     // X25519 ECDH
     let my_x25519_sk = x25519_dalek::StaticSecret::from(my_keys.x25519_sk);
-    let their_x25519_public = X25519PublicKey::from(<[u8; 32]>::try_from(their_x25519_pk).unwrap());
+    let their_x25519_public = X25519PublicKey::from(<[u8; 32]>::try_from(their_x25519_pk.clone()).unwrap());
     
     let dh_shared_secret = my_x25519_sk.diffie_hellman(&their_x25519_public);
     
-    let kyber_pk = KyberPublicKey::from_bytes(&their_kyber_pk).map_err(|_| CryptoError::InvalidKeyLength)?;
-    let (shared_secret, ciphertext) = encapsulate(&kyber_pk);
-    
-    // In a real protocol, you'd send the ciphertext back. For this demo we're just creating a master key structure.
-    // Combine both secrets.
-    let hkdf = Hkdf::<Sha256>::new(None, &dh_shared_secret.as_bytes().to_vec());
-    let mut okm = [0u8; 32];
+    // Validate their Kyber PK
+    let _kyber_pk = KyberPublicKey::from_bytes(&their_kyber_pk).map_err(|_| CryptoError::InvalidKeyLength)?;
+
+    // Combine secrets deterministically
     let mut combined_material = Vec::new();
     combined_material.extend_from_slice(dh_shared_secret.as_bytes());
-    combined_material.extend_from_slice(shared_secret.as_bytes());
     
+    if my_keys.kyber_pk < their_kyber_pk {
+        combined_material.extend_from_slice(&my_keys.kyber_pk);
+        combined_material.extend_from_slice(&their_kyber_pk);
+    } else {
+        combined_material.extend_from_slice(&their_kyber_pk);
+        combined_material.extend_from_slice(&my_keys.kyber_pk);
+    }
+    
+    let mut okm = [0u8; 32];
     let hkdf = Hkdf::<Sha256>::new(None, &combined_material);
     hkdf.expand(b"mesh-chat-v1", &mut okm).unwrap();
     
