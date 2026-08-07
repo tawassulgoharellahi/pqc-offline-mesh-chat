@@ -123,7 +123,6 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
                             if (type == "KEY_REQ") {
                                 Log.d("BLEMeshModule", "Received KEY_REQ from $sender")
-                                // 1. Deliver sender's keys to local JS to complete 2-way handshake
                                 if (keysData.isNotEmpty()) {
                                     val map = Arguments.createMap()
                                     map.putString("senderAddress", device.address)
@@ -131,7 +130,6 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                     sendEvent("onHandshakeKeysReceived", map)
                                 }
 
-                                // 2. Reply with local keys in KEY_RESP
                                 val myKeys = CryptoModule.identityKeys?.exportPublicKeysBase64() ?: ""
                                 if (myKeys.isNotEmpty()) {
                                     val keyRespJson = JSONObject().apply {
@@ -156,7 +154,14 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                 }
                                 seenMsgIds.add(msgId)
 
-                                val isForMe = dest.isEmpty() || dest.equals(device.address, ignoreCase = true)
+                                val myMac = bluetoothAdapter?.address ?: "02:00:00:00:00:00"
+                                val isForMe = dest.isEmpty() || 
+                                              dest.equals(myMac, ignoreCase = true) || 
+                                              myMac == "02:00:00:00:00:00" || 
+                                              myMac.startsWith("NODE_") || 
+                                              dest.startsWith("NODE_")
+
+                                Log.d("BLEMeshModule", "Message received on GATT Server. isForMe=$isForMe, dest=$dest, myMac=$myMac")
 
                                 if (isForMe) {
                                     val map = Arguments.createMap()
