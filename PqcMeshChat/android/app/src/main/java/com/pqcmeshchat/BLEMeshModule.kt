@@ -54,7 +54,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     fun getMacAddress(promise: Promise) {
         try {
             val mac = bluetoothAdapter?.address
-            if (mac != null && mac != "02:00:00:00:00:00") {
+            if (mac != null && BluetoothAdapter.checkBluetoothAddress(mac)) {
                 promise.resolve(mac)
             } else {
                 val nodeId = "NODE_" + (android.os.Build.MODEL.replace(" ", "") + "_" + android.os.Build.BOARD).take(12)
@@ -125,9 +125,11 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                 // Raw payload fallback
                             }
 
+                            val isSenderMacValid = BluetoothAdapter.checkBluetoothAddress(sender)
+                            val senderNode = if (isSenderMacValid) sender else device.address
+
                             if (type == "KEY_REQ") {
-                                Log.i("BLEMeshModule", "Received KEY_REQ from $sender")
-                                val senderNode = if (sender.isNotEmpty() && sender != "02:00:00:00:00:00") sender else device.address
+                                Log.i("BLEMeshModule", "Received KEY_REQ from $senderNode")
                                 if (keysData.isNotEmpty()) {
                                     val map = Arguments.createMap()
                                     map.putString("senderAddress", senderNode)
@@ -145,8 +147,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                     sendMessageToDeviceInternal(device.address, keyRespJson, null)
                                 }
                             } else if (type == "KEY_RESP") {
-                                Log.i("BLEMeshModule", "Received KEY_RESP from $sender")
-                                val senderNode = if (sender.isNotEmpty() && sender != "02:00:00:00:00:00") sender else device.address
+                                Log.i("BLEMeshModule", "Received KEY_RESP from $senderNode")
                                 val map = Arguments.createMap()
                                 map.putString("senderAddress", senderNode)
                                 map.putString("keys", keysData)
@@ -168,16 +169,16 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
                                 if (isForMe) {
                                     val map = Arguments.createMap()
-                                    map.putString("senderAddress", sender)
+                                    map.putString("senderAddress", senderNode)
                                     map.putString("payload", payload)
                                     sendEvent("onMessageReceived", map)
                                 } else if (ttl > 1) {
                                     val newTtl = ttl - 1
-                                    val packet = RelayPacket(dest, sender, msgId, newTtl, payload)
+                                    val packet = RelayPacket(dest, senderNode, msgId, newTtl, payload)
                                     relayQueue.add(packet)
 
                                     val relayMap = Arguments.createMap()
-                                    relayMap.putString("senderAddress", sender)
+                                    relayMap.putString("senderAddress", senderNode)
                                     relayMap.putString("destAddress", dest)
                                     relayMap.putInt("ttl", newTtl)
                                     sendEvent("onMessageRelayed", relayMap)
@@ -251,7 +252,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         val myKeys = CryptoModule.identityKeys?.exportPublicKeysBase64() ?: ""
         val reqJson = JSONObject().apply {
             put("type", "KEY_REQ")
-            put("sender", if (senderMacAddress.isNotEmpty()) senderMacAddress else (bluetoothAdapter?.address ?: "02:00:00:00:00:00"))
+            put("sender", if (BluetoothAdapter.checkBluetoothAddress(senderMacAddress)) senderMacAddress else (bluetoothAdapter?.address ?: "02:00:00:00:00:00"))
             put("keys", myKeys)
         }.toString()
         sendMessageToDeviceInternal(deviceAddress, reqJson, promise)
@@ -268,20 +269,27 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         val iterator = relayQueue.iterator()
         while (iterator.hasNext()) {
             val packet = iterator.next()
-            val device = bluetoothAdapter?.getRemoteDevice(packet.dest)
-            if (device != null) {
-                val envelope = JSONObject().apply {
-                    put("type", "MSG")
-                    put("dest", packet.dest)
-                    put("sender", packet.sender)
-                    put("msgId", packet.msgId)
-                    put("ttl", packet.ttl)
-                    put("payload", packet.payload)
-                }.toString()
+            val targetMac = if (BluetoothAdapter.checkBluetoothAddress(packet.dest)) {
+                packet.dest
+            } else {
+                discoveredPeers.entries.firstOrNull { it.value.equals(packet.dest, ignoreCase = true) }?.key
+            }
+            if (targetMac != null && BluetoothAdapter.checkBluetoothAddress(targetMac)) {
+                val device = bluetoothAdapter?.getRemoteDevice(targetMac)
+                if (device != null) {
+                    val envelope = JSONObject().apply {
+                        put("type", "MSG")
+                        put("dest", packet.dest)
+                        put("sender", packet.sender)
+                        put("msgId", packet.msgId)
+                        put("ttl", packet.ttl)
+                        put("payload", packet.payload)
+                    }.toString()
 
-                val chunks = chunkingEngine.splitMessage(envelope.toByteArray(), packet.ttl.toUByte())
-                if (chunks.isNotEmpty()) {
-                    iterator.remove()
+                    val chunks = chunkingEngine.splitMessage(envelope.toByteArray(), packet.ttl.toUByte())
+                    if (chunks.isNotEmpty()) {
+                        iterator.remove()
+                    }
                 }
             }
         }
@@ -294,9 +302,20 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             Log.e("BLEMeshModule", "Error stopping discovery: ${e.message}")
         }
 
-        val device = bluetoothAdapter?.getRemoteDevice(deviceAddress)
+        val targetMac = if (BluetoothAdapter.checkBluetoothAddress(deviceAddress)) {
+            deviceAddress
+        } else {
+            discoveredPeers.entries.firstOrNull { it.value.equals(deviceAddress, ignoreCase = true) }?.key ?: deviceAddress
+        }
+
+        if (!BluetoothAdapter.checkBluetoothAddress(targetMac)) {
+            promise?.reject("INVALID_ADDRESS", "'$deviceAddress' is not a valid Bluetooth MAC address.")
+            return
+        }
+
+        val device = bluetoothAdapter?.getRemoteDevice(targetMac)
         if (device == null) {
-            promise?.reject("INVALID_DEVICE", "Could not find device $deviceAddress")
+            promise?.reject("INVALID_DEVICE", "Could not find device $targetMac")
             return
         }
 
@@ -319,7 +338,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 }
 
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    Log.i("BLEMeshModule", "Connected to GATT server $deviceAddress")
+                    Log.i("BLEMeshModule", "Connected to GATT server $targetMac")
                     val mtuReq = gatt.requestMtu(512)
                     if (!mtuReq) {
                         Log.i("BLEMeshModule", "requestMtu failed, discovering services immediately...")
@@ -333,7 +352,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                         }, 300)
                     }
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    Log.i("BLEMeshModule", "Disconnected from GATT server $deviceAddress")
+                    Log.i("BLEMeshModule", "Disconnected from GATT server $targetMac")
                     gatt.close()
                 }
             }
@@ -394,7 +413,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             }
         }
         
-        Log.i("BLEMeshModule", "Connecting GATT to device $deviceAddress via TRANSPORT_LE...")
+        Log.i("BLEMeshModule", "Connecting GATT to device $targetMac via TRANSPORT_LE...")
         device.connectGatt(reactApplicationContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
         promise?.resolve("Message transmission started")
     }
@@ -404,7 +423,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         val envelope = JSONObject().apply {
             put("type", "MSG")
             put("dest", deviceAddress)
-            put("sender", if (senderMacAddress.isNotEmpty()) senderMacAddress else (bluetoothAdapter?.address ?: "02:00:00:00:00:00"))
+            put("sender", if (BluetoothAdapter.checkBluetoothAddress(senderMacAddress)) senderMacAddress else (bluetoothAdapter?.address ?: "02:00:00:00:00:00"))
             put("msgId", UUID.randomUUID().toString())
             put("ttl", 5)
             put("payload", message)
