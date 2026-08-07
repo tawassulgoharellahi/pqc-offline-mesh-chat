@@ -34,13 +34,15 @@ function App(): React.JSX.Element {
   const [qrPayload, setQrPayload] = useState<string>('');
   
   const [theirKeys, setTheirKeys] = useState<string>('');
-  const [targetDevice, setTargetDevice] = useState<string>(''); // Auto-stored during QR scan
+  const [targetDevice, setTargetDevice] = useState<string>('');
   
   const [messages, setMessages] = useState<Message[]>([]);
+  const [relayedCount, setRelayedCount] = useState<number>(0);
   const [inputText, setInputText] = useState('');
   
   const [handshakeDone, setHandshakeDone] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [meshActive, setMeshActive] = useState(false);
   
   const device = useCameraDevice('back');
 
@@ -73,7 +75,7 @@ function App(): React.JSX.Element {
   };
 
   useEffect(() => {
-    const subscription = bleEmitter.addListener('onMessageReceived', async (event) => {
+    const recvSub = bleEmitter.addListener('onMessageReceived', async (event) => {
       const { senderAddress, payload } = event;
       
       try {
@@ -94,8 +96,15 @@ function App(): React.JSX.Element {
         console.error("Failed to decrypt incoming message:", e);
       }
     });
+
+    const relaySub = bleEmitter.addListener('onMessageRelayed', (event) => {
+      setRelayedCount(prev => prev + 1);
+    });
     
-    return () => subscription.remove();
+    return () => {
+      recvSub.remove();
+      relaySub.remove();
+    };
   }, [handshakeDone]);
 
   const generateKeys = async () => {
@@ -119,6 +128,7 @@ function App(): React.JSX.Element {
   const startAdvertising = async () => {
     try {
       await BLEMeshModule.startAdvertising();
+      setMeshActive(true);
       Alert.alert("Success", "BLE Mesh Node Started!");
     } catch (e: any) {
       Alert.alert("Error", e.message);
@@ -233,10 +243,16 @@ function App(): React.JSX.Element {
           {handshakeDone && <Text style={styles.successText}>✓ Session Secured</Text>}
         </View>
 
-        {/* Step 3: Mesh Node */}
+        {/* Step 3: Mesh Network */}
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>3. Start Mesh Network</Text>
           <Button title="Start BLE GATT Server & Advertising" onPress={startAdvertising} color="#10B981" />
+          {meshActive && (
+            <View style={[styles.statusBox, { marginTop: 12, backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
+              <Text style={[styles.statusText, { color: '#1E40AF' }]}>📡 Gossip Relay Node: Active</Text>
+              <Text style={[styles.statusText, { color: '#1E40AF' }]}>📦 Packets Relayed via Mesh: {relayedCount}</Text>
+            </View>
+          )}
         </View>
 
         {/* Chat Interface */}
