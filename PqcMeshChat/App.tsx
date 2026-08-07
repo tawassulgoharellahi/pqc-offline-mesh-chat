@@ -212,10 +212,11 @@ function App(): React.JSX.Element {
               }
             }
           }}
-          showFrame={true}
-          laserColor="#3B82F6"
-          frameColor="#FFFFFF"
+          showFrame={false}
         />
+        <View style={styles.viewFinderOverlay} pointerEvents="none">
+          <View style={styles.viewFinderSquare} />
+        </View>
         <View style={styles.cancelScanArea}>
           <Button title="Cancel Scan" onPress={() => setIsScanning(false)} color="#EF4444" />
         </View>
@@ -364,7 +365,9 @@ const styles = StyleSheet.create({
   inputArea: { padding: 16, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderColor: '#E5E7EB' },
   row: { flexDirection: 'row', alignItems: 'center' },
   input: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 6, padding: 10, backgroundColor: '#F9FAFB' },
-  cancelScanArea: { position: 'absolute', bottom: 40, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.5)', padding: 8, borderRadius: 8 }
+  cancelScanArea: { position: 'absolute', bottom: 40, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.5)', padding: 8, borderRadius: 8 },
+  viewFinderOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' },
+  viewFinderSquare: { width: 260, height: 260, borderWidth: 2, borderColor: '#3B82F6', borderRadius: 16, backgroundColor: 'transparent' }
 });
 
 export default function AppWrapper() {
