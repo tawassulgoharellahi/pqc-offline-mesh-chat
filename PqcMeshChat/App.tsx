@@ -66,8 +66,11 @@ function App(): React.JSX.Element {
 
         try {
           const parsed = JSON.parse(scannedValue);
-          if (parsed.keys) extractedKeys = parsed.keys;
-          if (parsed.mac) extractedMac = parsed.mac;
+          if (parsed.k) extractedKeys = parsed.k;
+          else if (parsed.keys) extractedKeys = parsed.keys;
+          
+          if (parsed.m) extractedMac = parsed.m;
+          else if (parsed.mac) extractedMac = parsed.mac;
         } catch (e) {
           extractedKeys = scannedValue;
         }
@@ -78,7 +81,7 @@ function App(): React.JSX.Element {
 
         // Auto-initiate PQC Handshake immediately after scanning
         performAutoHandshake(extractedKeys);
-        Alert.alert("QR Code Scanned", "Keys & MAC exchanged. Post-Quantum Secure Session Established!");
+        Alert.alert("QR Code Detected!", "Keys & MAC exchanged. Post-Quantum Session Secured!");
       }
     }
   });
@@ -148,7 +151,8 @@ function App(): React.JSX.Element {
       }
       setMyKeys(base64Keys);
       setMyMac(mac);
-      setQrPayload(JSON.stringify({ keys: base64Keys, mac }));
+      // Compact JSON structure + low error correction for maximum QR scanning speed
+      setQrPayload(JSON.stringify({ k: base64Keys, m: mac }));
     } catch (e: any) {
       Alert.alert("Key Gen Error", e.message);
     }
@@ -184,7 +188,7 @@ function App(): React.JSX.Element {
   if (isScanning) {
     if (device == null) return (
       <SafeAreaView style={styles.container}>
-        <Text>No Camera Device Found</Text>
+        <Text style={{ textAlign: 'center', marginTop: 40 }}>No Camera Device Found</Text>
         <Button title="Back" onPress={() => setIsScanning(false)} />
       </SafeAreaView>
     );
@@ -195,8 +199,12 @@ function App(): React.JSX.Element {
           device={device}
           isActive={true}
           codeScanner={codeScanner}
+          enableZoomGesture={true}
         />
-        <View style={{ position: 'absolute', bottom: 50, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.5)', padding: 10, borderRadius: 10 }}>
+        {/* Scanning Viewfinder Frame */}
+        <View style={styles.scannerOverlay}>
+          <View style={styles.scanTargetBox} />
+          <Text style={styles.scanInstruction}>Center the QR Code inside the box</Text>
           <Button title="Cancel Scan" onPress={() => setIsScanning(false)} color="#EF4444" />
         </View>
       </View>
@@ -219,8 +227,13 @@ function App(): React.JSX.Element {
           {qrPayload ? (
             <View style={{marginTop: 16, alignItems: 'center'}}>
               <Text style={styles.label}>Show this QR code to your friend:</Text>
-              <View style={{ padding: 16, backgroundColor: 'white', borderRadius: 8, elevation: 4 }}>
-                <QRCode value={qrPayload} size={240} />
+              <View style={{ padding: 12, backgroundColor: 'white', borderRadius: 8, elevation: 4 }}>
+                <QRCode 
+                  value={qrPayload} 
+                  size={280} 
+                  ecl="L" 
+                  quietZone={10} 
+                />
               </View>
             </View>
           ) : null}
@@ -300,7 +313,6 @@ const styles = StyleSheet.create({
   statusBox: { backgroundColor: '#ECFDF5', padding: 10, borderRadius: 6, borderWidth: 1, borderColor: '#A7F3D0', marginBottom: 8 },
   statusText: { fontSize: 12, color: '#065F46', fontWeight: '600' },
   placeholderText: { fontSize: 12, color: '#9CA3AF', fontStyle: 'italic', marginVertical: 4 },
-  successText: { color: '#10B981', fontWeight: 'bold', marginTop: 8, textAlign: 'center' },
   chatArea: { marginTop: 8, paddingBottom: 40 },
   messageBubble: { padding: 12, borderRadius: 12, marginBottom: 8, maxWidth: '85%' },
   myMessage: { backgroundColor: '#3B82F6', alignSelf: 'flex-end', borderBottomRightRadius: 2 },
@@ -309,7 +321,10 @@ const styles = StyleSheet.create({
   messageText: { fontSize: 16, color: '#FFFFFF' },
   inputArea: { padding: 16, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderColor: '#E5E7EB' },
   row: { flexDirection: 'row', alignItems: 'center' },
-  input: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 6, padding: 10, backgroundColor: '#F9FAFB' }
+  input: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 6, padding: 10, backgroundColor: '#F9FAFB' },
+  scannerOverlay: { position: 'absolute', bottom: 40, left: 0, right: 0, alignItems: 'center' },
+  scanTargetBox: { width: 260, height: 260, borderWidth: 3, borderColor: '#3B82F6', borderRadius: 12, marginBottom: 16, backgroundColor: 'rgba(255,255,255,0.05)' },
+  scanInstruction: { color: '#FFFFFF', fontSize: 14, fontWeight: '600', marginBottom: 16, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6 }
 });
 
 export default function AppWrapper() {
