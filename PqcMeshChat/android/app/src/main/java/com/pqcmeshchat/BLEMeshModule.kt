@@ -44,6 +44,12 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         return "BLEMeshModule"
     }
 
+    private fun isValidTargetMac(mac: String?): Boolean {
+        if (mac.isNullOrEmpty()) return false
+        if (mac == "02:00:00:00:00:00" || mac.startsWith("02:00:00") || mac.startsWith("NODE_")) return false
+        return BluetoothAdapter.checkBluetoothAddress(mac)
+    }
+
     private fun sendEvent(eventName: String, params: WritableMap?) {
         reactApplicationContext
             .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
@@ -54,7 +60,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     fun getMacAddress(promise: Promise) {
         try {
             val mac = bluetoothAdapter?.address
-            if (mac != null && BluetoothAdapter.checkBluetoothAddress(mac)) {
+            if (isValidTargetMac(mac)) {
                 promise.resolve(mac)
             } else {
                 val nodeId = "NODE_" + (android.os.Build.MODEL.replace(" ", "") + "_" + android.os.Build.BOARD).take(12)
@@ -125,8 +131,9 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                 // Raw payload fallback
                             }
 
-                            val isSenderMacValid = BluetoothAdapter.checkBluetoothAddress(sender)
-                            val senderNode = if (isSenderMacValid) sender else device.address
+                            val isSenderMacValid = isValidTargetMac(sender)
+                            val bestDiscoveredMac = discoveredPeers.keys.firstOrNull { isValidTargetMac(it) }
+                            val senderNode = if (isSenderMacValid) sender else (bestDiscoveredMac ?: device.address)
 
                             if (type == "KEY_REQ") {
                                 Log.i("BLEMeshModule", "Received KEY_REQ from $senderNode")
@@ -252,7 +259,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         val myKeys = CryptoModule.identityKeys?.exportPublicKeysBase64() ?: ""
         val reqJson = JSONObject().apply {
             put("type", "KEY_REQ")
-            put("sender", if (BluetoothAdapter.checkBluetoothAddress(senderMacAddress)) senderMacAddress else (bluetoothAdapter?.address ?: "02:00:00:00:00:00"))
+            put("sender", if (isValidTargetMac(senderMacAddress)) senderMacAddress else (bluetoothAdapter?.address ?: "02:00:00:00:00:00"))
             put("keys", myKeys)
         }.toString()
         sendMessageToDeviceInternal(deviceAddress, reqJson, promise)
@@ -269,12 +276,12 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         val iterator = relayQueue.iterator()
         while (iterator.hasNext()) {
             val packet = iterator.next()
-            val targetMac = if (BluetoothAdapter.checkBluetoothAddress(packet.dest)) {
+            val targetMac = if (isValidTargetMac(packet.dest)) {
                 packet.dest
             } else {
                 discoveredPeers.entries.firstOrNull { it.value.equals(packet.dest, ignoreCase = true) }?.key
             }
-            if (targetMac != null && BluetoothAdapter.checkBluetoothAddress(targetMac)) {
+            if (targetMac != null && isValidTargetMac(targetMac)) {
                 val device = bluetoothAdapter?.getRemoteDevice(targetMac)
                 if (device != null) {
                     val envelope = JSONObject().apply {
@@ -302,13 +309,13 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             Log.e("BLEMeshModule", "Error stopping discovery: ${e.message}")
         }
 
-        val targetMac = if (BluetoothAdapter.checkBluetoothAddress(deviceAddress)) {
+        val targetMac = if (isValidTargetMac(deviceAddress)) {
             deviceAddress
         } else {
             discoveredPeers.entries.firstOrNull { it.value.equals(deviceAddress, ignoreCase = true) }?.key ?: deviceAddress
         }
 
-        if (!BluetoothAdapter.checkBluetoothAddress(targetMac)) {
+        if (!isValidTargetMac(targetMac)) {
             promise?.reject("INVALID_ADDRESS", "'$deviceAddress' is not a valid Bluetooth MAC address.")
             return
         }
@@ -423,7 +430,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         val envelope = JSONObject().apply {
             put("type", "MSG")
             put("dest", deviceAddress)
-            put("sender", if (BluetoothAdapter.checkBluetoothAddress(senderMacAddress)) senderMacAddress else (bluetoothAdapter?.address ?: "02:00:00:00:00:00"))
+            put("sender", if (isValidTargetMac(senderMacAddress)) senderMacAddress else (bluetoothAdapter?.address ?: "02:00:00:00:00:00"))
             put("msgId", UUID.randomUUID().toString())
             put("ttl", 5)
             put("payload", message)

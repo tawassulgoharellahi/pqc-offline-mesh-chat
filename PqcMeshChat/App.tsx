@@ -105,6 +105,11 @@ export default function App() {
       setQrPayload(JSON.stringify({ m: mac }));
 
       await BLEMeshModule.startAdvertising();
+      try {
+        await BLEMeshModule.startPeerDiscovery();
+      } catch (e) {
+        console.warn("Auto scan notice:", e);
+      }
       setMeshActive(true);
     } catch (err) {
       console.warn("Auto init notice:", err);
@@ -216,7 +221,7 @@ export default function App() {
         <Text style={styles.title}>PQC Offline Mesh Chat</Text>
       </View>
       
-      <ScrollView style={styles.content}>
+      <ScrollView style={styles.content} contentContainerStyle={{ paddingBottom: 80 }}>
         
         {/* Step 1: My Identity & Status */}
         <View style={styles.card}>
@@ -500,8 +505,8 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   chatBox: {
-    minHeight: 120,
-    maxHeight: 200,
+    minHeight: 80,
+    maxHeight: 140,
     backgroundColor: '#F9FAFB',
     borderRadius: 6,
     padding: 8,
