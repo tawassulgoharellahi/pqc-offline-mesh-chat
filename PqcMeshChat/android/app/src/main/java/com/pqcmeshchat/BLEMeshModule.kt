@@ -280,7 +280,6 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 packet.dest
             } else {
                 discoveredPeers.entries.firstOrNull { it.value.equals(packet.dest, ignoreCase = true) }?.key
-                ?: discoveredPeers.keys.firstOrNull { isValidTargetMac(it) }
             }
             if (targetMac != null && isValidTargetMac(targetMac)) {
                 val device = bluetoothAdapter?.getRemoteDevice(targetMac)
@@ -303,6 +302,15 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         }
     }
 
+    private fun isPeerMatch(scanName: String?, targetAddress: String): Boolean {
+        if (scanName.isNullOrEmpty()) return false
+        if (scanName.equals(targetAddress, ignoreCase = true)) return true
+        val cleanScan = scanName.replace("NODE_", "").replace("PQC Node", "").replace(" ", "").replace("_", "").lowercase()
+        val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").replace(" ", "").replace("_", "").lowercase()
+        if (cleanScan.isEmpty() || cleanTarget.isEmpty()) return false
+        return cleanScan.contains(cleanTarget) || cleanTarget.contains(cleanScan)
+    }
+
     private fun sendMessageToDeviceInternal(deviceAddress: String, message: String, promise: Promise?) {
         try {
             stopPeerDiscovery()
@@ -310,16 +318,59 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             Log.e("BLEMeshModule", "Error stopping discovery: ${e.message}")
         }
 
-        val targetMac = if (isValidTargetMac(deviceAddress)) {
+        var targetMac: String? = if (isValidTargetMac(deviceAddress) && discoveredPeers.containsKey(deviceAddress)) {
             deviceAddress
         } else {
-            discoveredPeers.entries.firstOrNull { it.value.equals(deviceAddress, ignoreCase = true) }?.key
+            discoveredPeers.entries.firstOrNull { isPeerMatch(it.value, deviceAddress) || isPeerMatch(it.key, deviceAddress) }?.key
             ?: discoveredPeers.keys.firstOrNull { isValidTargetMac(it) }
-            ?: deviceAddress
+            ?: (if (isValidTargetMac(deviceAddress)) deviceAddress else null)
         }
 
-        if (!isValidTargetMac(targetMac)) {
-            promise?.reject("INVALID_ADDRESS", "'$deviceAddress' is not a valid Bluetooth MAC address.")
+        if (targetMac == null || !isValidTargetMac(targetMac)) {
+            try {
+                val connectedDevices = bluetoothManager.getConnectedDevices(BluetoothProfile.GATT)
+                targetMac = connectedDevices.firstOrNull { isValidTargetMac(it.address) }?.address
+            } catch (e: Exception) {
+                Log.w("BLEMeshModule", "Error getting connected GATT devices: ${e.message}")
+            }
+        }
+
+        if (targetMac == null || !isValidTargetMac(targetMac)) {
+            try {
+                val bonded = bluetoothAdapter?.bondedDevices
+                targetMac = bonded?.firstOrNull { isValidTargetMac(it.address) }?.address
+            } catch (e: Exception) {
+                Log.w("BLEMeshModule", "Error getting bonded devices: ${e.message}")
+            }
+        }
+
+        if (targetMac.isNullOrEmpty() || !isValidTargetMac(targetMac)) {
+            try {
+                val scanner = bluetoothAdapter?.bluetoothLeScanner
+                if (scanner != null) {
+                    val latch = java.util.concurrent.CountDownLatch(1)
+                    val quickCallback = object : ScanCallback() {
+                        override fun onScanResult(callbackType: Int, result: ScanResult) {
+                            val addr = result.device.address
+                            val name = result.device.name ?: ""
+                            if (isValidTargetMac(addr)) {
+                                discoveredPeers[addr] = if (name.isNotEmpty()) name else "PQC Node (${addr.takeLast(5)})"
+                                targetMac = addr
+                                latch.countDown()
+                            }
+                        }
+                    }
+                    scanner.startScan(quickCallback)
+                    latch.await(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    try { scanner.stopScan(quickCallback) } catch (e: Exception) {}
+                }
+            } catch (e: Exception) {
+                Log.w("BLEMeshModule", "Fast scan exception: ${e.message}")
+            }
+        }
+
+        if (targetMac.isNullOrEmpty() || !isValidTargetMac(targetMac)) {
+            promise?.reject("INVALID_ADDRESS", "Could not resolve active BLE MAC address for '$deviceAddress'. Please ensure Bluetooth & Location GPS are ON.")
             return
         }
 
@@ -337,13 +388,25 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
         var currentChunkIndex = 0
         var servicesDiscovered = false
+        var retryCount = 0
 
         val gattCallback = object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                 Log.i("BLEMeshModule", "onConnectionStateChange: status=$status, newState=$newState")
                 if (status != BluetoothGatt.GATT_SUCCESS) {
-                    Log.e("BLEMeshModule", "GATT connection error status=$status, closing connection...")
+                    Log.e("BLEMeshModule", "GATT connection status error: $status, closing...")
                     gatt.close()
+                    if (retryCount < 2) {
+                        retryCount++
+                        mainHandler.postDelayed({
+                            val freshMac = discoveredPeers.keys.firstOrNull { isValidTargetMac(it) } ?: targetMac
+                            Log.i("BLEMeshModule", "Retrying GATT connection (attempt $retryCount) to $freshMac...")
+                            val retryDevice = bluetoothAdapter?.getRemoteDevice(freshMac)
+                            retryDevice?.connectGatt(reactApplicationContext, false, this, BluetoothDevice.TRANSPORT_LE)
+                        }, 450)
+                    } else {
+                        promise?.reject("GATT_CONNECT_FAILED", "GATT connection failed with status $status")
+                    }
                     return
                 }
 
