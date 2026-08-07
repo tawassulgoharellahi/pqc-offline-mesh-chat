@@ -78,6 +78,7 @@ interface Message {
   text: string;
   isMine: boolean;
   time: string;
+  status?: 'sent' | 'queued';
 }
 
 interface Peer {
@@ -230,12 +231,20 @@ export default function App() {
     const relaySub = bleEmitter?.addListener('onMessageRelayed', (event) => {
       setRelayedCount(prev => prev + 1);
     });
+
+    const deliveredSub = bleEmitter?.addListener('onMessageDelivered', (event) => {
+      const { msgId } = event;
+      if (msgId) {
+        setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, status: 'sent' } : msg));
+      }
+    });
     
     return () => {
       recvSub?.remove();
       handshakeSub?.remove();
       peerSub?.remove();
       relaySub?.remove();
+      deliveredSub?.remove();
     };
   }, []);
 
@@ -250,34 +259,6 @@ export default function App() {
     }
   };
 
-  const purgeSessionAndResetKeys = async () => {
-    Alert.alert(
-      "Purge Session & Reset Keys 🧹",
-      "Are you sure you want to purge all active session cache and generate new PQC identity keys? You will need to scan your partner's QR code again.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Purge & Reset",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              const newKeysJson = await CryptoModule.resetSession();
-              await BLEMeshModule.resetMeshState();
-              setMyKeys(newKeysJson);
-              setQrPayload(JSON.stringify({ m: myMac, k: newKeysJson }));
-              setMessages([]);
-              setTargetDevice('');
-              updateHandshakeState(false);
-              Alert.alert("Session Purged 🧹", "New PQC keys generated! Scan your partner's QR code to start a fresh secure session.");
-            } catch (err: any) {
-              Alert.alert("Purge Error", err.message);
-            }
-          }
-        }
-      ]
-    );
-  };
-
   const connectToPeer = async (peerAddress: string) => {
     try {
       setTargetDevice(peerAddress);
@@ -290,7 +271,8 @@ export default function App() {
   };
 
   const sendMessage = async () => {
-    if (!inputText.trim()) return;
+    const textToSend = inputText.trim();
+    if (!textToSend) return;
     if (!targetDevice) {
       Alert.alert("No Peer Selected", "Please scan a peer's QR code or select a peer to start messaging!");
       return;
@@ -299,28 +281,35 @@ export default function App() {
       Alert.alert("Encryption Notice", "Exchanging PQC keys with your peer... Please tap Retry if needed.");
       return;
     }
-    
+
+    const msgId = Math.random().toString(36).substring(2, 11) + '_' + Date.now();
+    const now = new Date();
+    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+
+    // 1. Clear input & render message bubble INSTANTLY (0ms lag!)
+    setInputText('');
+    setMessages(prev => [...prev, {
+      id: msgId,
+      sender: 'Me',
+      text: textToSend,
+      isMine: true,
+      time: timeStr,
+      status: 'queued'
+    }]);
+
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 40);
+
+    // 2. Perform encryption & BLE transmission in background
     try {
-      const ciphertextBase64 = await CryptoModule.encryptMessage(inputText);
-      await BLEMeshModule.sendMessageToDevice(targetDevice, ciphertextBase64, myMac);
-      
-      const now = new Date();
-      const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-
-      setMessages(prev => [...prev, {
-        id: Math.random().toString(),
-        sender: 'Me',
-        text: inputText,
-        isMine: true,
-        time: timeStr
-      }]);
-      setInputText('');
-
-      setTimeout(() => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-      }, 80);
+      const ciphertextBase64 = await CryptoModule.encryptMessage(textToSend);
+      const res = await BLEMeshModule.sendMessageToDevice(targetDevice, ciphertextBase64, myMac, msgId);
+      if (res === 'DELIVERED') {
+        setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, status: 'sent' } : msg));
+      }
     } catch (e: any) {
-      Alert.alert("Send Error", e.message);
+      console.warn("Background transmission notice:", e.message);
     }
   };
 
@@ -361,15 +350,6 @@ export default function App() {
               hitSlop={8}
             >
               <CameraIcon size={20} color="#FFFFFF" />
-            </Pressable>
-
-            <Pressable 
-              style={({ pressed }) => [styles.topIconCircleAction, pressed && styles.topIconCircleActionPressed]} 
-              onPress={purgeSessionAndResetKeys}
-              android_ripple={{ color: 'rgba(255, 255, 255, 0.25)', borderless: true, radius: 20 }}
-              hitSlop={8}
-            >
-              <RefreshIcon size={20} color="#FFFFFF" />
             </Pressable>
           </View>
         </View>
@@ -432,7 +412,11 @@ export default function App() {
                   <Text style={msg.isMine ? styles.myMsgText : styles.theirMsgText}>{msg.text}</Text>
                   <View style={styles.msgFooter}>
                     <Text style={msg.isMine ? styles.myTimeText : styles.theirTimeText}>{msg.time}</Text>
-                    {msg.isMine && <Text style={styles.lockIcon}> 🔒</Text>}
+                    {msg.isMine && (
+                      <Text style={msg.status === 'queued' ? styles.queuedStatusText : styles.lockIcon}>
+                        {msg.status === 'queued' ? ' ⌛ Outbox' : ' ✓ 🔒'}
+                      </Text>
+                    )}
                   </View>
                 </View>
               ))
@@ -847,6 +831,11 @@ const styles = StyleSheet.create({
   },
   lockIcon: {
     fontSize: 10,
+  },
+  queuedStatusText: {
+    fontSize: 10,
+    color: '#EAB308',
+    fontWeight: '600',
   },
   footerInputContainer: {
     flexDirection: 'row',
