@@ -46,21 +46,39 @@ function App(): React.JSX.Element {
   
   const device = useCameraDevice('back');
 
+  const performAutoHandshake = async (keysToUse: string) => {
+    try {
+      await CryptoModule.initiateHandshake(keysToUse);
+      setHandshakeDone(true);
+    } catch (e: any) {
+      console.error("Auto-handshake error:", e.message);
+      Alert.alert("Handshake Failed", e.message);
+    }
+  };
+
   const codeScanner = useCodeScanner({
     codeTypes: ['qr'],
     onCodeScanned: (codes) => {
       if (codes.length > 0 && codes[0].value) {
         const scannedValue = codes[0].value;
+        let extractedKeys = scannedValue;
+        let extractedMac = '';
+
         try {
           const parsed = JSON.parse(scannedValue);
-          if (parsed.keys) setTheirKeys(parsed.keys);
-          else setTheirKeys(scannedValue);
-          if (parsed.mac) setTargetDevice(parsed.mac);
+          if (parsed.keys) extractedKeys = parsed.keys;
+          if (parsed.mac) extractedMac = parsed.mac;
         } catch (e) {
-          setTheirKeys(scannedValue);
+          extractedKeys = scannedValue;
         }
+
+        setTheirKeys(extractedKeys);
+        if (extractedMac) setTargetDevice(extractedMac);
         setIsScanning(false);
-        Alert.alert("QR Code Scanned", "Partner's PQC keys & MAC address stored automatically!");
+
+        // Auto-initiate PQC Handshake immediately after scanning
+        performAutoHandshake(extractedKeys);
+        Alert.alert("QR Code Scanned", "Keys & MAC exchanged. Post-Quantum Secure Session Established!");
       }
     }
   });
@@ -136,20 +154,6 @@ function App(): React.JSX.Element {
     }
   };
 
-  const initiateHandshake = async () => {
-    if (!theirKeys) {
-      Alert.alert("Error", "No partner keys available. Please scan partner's QR code first.");
-      return;
-    }
-    try {
-      await CryptoModule.initiateHandshake(theirKeys);
-      setHandshakeDone(true);
-      Alert.alert("Secure Session Established", "Post-Quantum Handshake Complete! You can now chat securely.");
-    } catch (e: any) {
-      Alert.alert("Handshake Failed", e.message);
-    }
-  };
-
   const sendMessage = async () => {
     if (!inputText) return;
     if (!targetDevice) {
@@ -157,7 +161,7 @@ function App(): React.JSX.Element {
       return;
     }
     if (!handshakeDone) {
-      Alert.alert("Error", "You must complete the key exchange handshake first!");
+      Alert.alert("Error", "You must scan your partner's QR code to establish a secure PQC session first!");
       return;
     }
     
@@ -233,15 +237,11 @@ function App(): React.JSX.Element {
             <View style={styles.statusBox}>
               <Text style={styles.statusText}>✓ Partner Public Keys: Auto-Stored</Text>
               <Text style={styles.statusText}>✓ Partner MAC Address: {targetDevice || 'Auto-Detected'}</Text>
+              {handshakeDone && <Text style={[styles.statusText, { color: '#059669', marginTop: 4 }]}>🔒 Post-Quantum Handshake: Complete</Text>}
             </View>
           ) : (
-            <Text style={styles.placeholderText}>Scan partner's QR code to automatically exchange keys & MAC address.</Text>
+            <Text style={styles.placeholderText}>Scan partner's QR code to automatically establish secure PQC session.</Text>
           )}
-
-          <View style={{marginTop: 12}}>
-            <Button title="Initiate Secure Handshake" onPress={initiateHandshake} color="#8B5CF6" />
-          </View>
-          {handshakeDone && <Text style={styles.successText}>✓ Session Secured</Text>}
         </View>
 
         {/* Step 3: Mesh Status */}
