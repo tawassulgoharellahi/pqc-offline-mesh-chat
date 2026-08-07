@@ -123,4 +123,7 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+
+    // Google ML Kit for VisionCamera barcode/QR code scanning
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
 }
