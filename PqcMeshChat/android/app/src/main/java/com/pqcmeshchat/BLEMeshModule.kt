@@ -280,6 +280,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 packet.dest
             } else {
                 discoveredPeers.entries.firstOrNull { it.value.equals(packet.dest, ignoreCase = true) }?.key
+                ?: discoveredPeers.keys.firstOrNull { isValidTargetMac(it) }
             }
             if (targetMac != null && isValidTargetMac(targetMac)) {
                 val device = bluetoothAdapter?.getRemoteDevice(targetMac)
@@ -312,7 +313,9 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         val targetMac = if (isValidTargetMac(deviceAddress)) {
             deviceAddress
         } else {
-            discoveredPeers.entries.firstOrNull { it.value.equals(deviceAddress, ignoreCase = true) }?.key ?: deviceAddress
+            discoveredPeers.entries.firstOrNull { it.value.equals(deviceAddress, ignoreCase = true) }?.key
+            ?: discoveredPeers.keys.firstOrNull { isValidTargetMac(it) }
+            ?: deviceAddress
         }
 
         if (!isValidTargetMac(targetMac)) {

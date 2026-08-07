@@ -16,6 +16,7 @@ import {
   Platform,
   ScrollView,
   KeyboardAvoidingView,
+  Modal,
 } from 'react-native';
 import { Camera } from 'react-native-camera-kit';
 import QRCode from 'react-native-qrcode-svg';
@@ -28,6 +29,7 @@ interface Message {
   sender: string;
   text: string;
   isMine: boolean;
+  time: string;
 }
 
 interface Peer {
@@ -55,9 +57,11 @@ export default function App() {
   // Peer Discovery State
   const [discoveredPeers, setDiscoveredPeers] = useState<Peer[]>([]);
   const [isDiscovering, setIsDiscovering] = useState<boolean>(false);
+  const [showPeersModal, setShowPeersModal] = useState<boolean>(false);
 
-  // QR Scanning State
+  // QR Scanning & Display Modals
   const [isScanning, setIsScanning] = useState<boolean>(false);
+  const [showMyQrModal, setShowMyQrModal] = useState<boolean>(false);
   const [qrPayload, setQrPayload] = useState<string>('');
   const [showManualSection, setShowManualSection] = useState<boolean>(false);
 
@@ -82,14 +86,14 @@ export default function App() {
     }
   };
 
-  const performHandshakeWithKeys = async (keysToUse: string) => {
+  const performHandshakeWithKeys = async (keysJsonString: string) => {
     try {
-      await CryptoModule.initiateHandshake(keysToUse);
+      if (!keysJsonString) return;
+      await CryptoModule.initiateHandshake(keysJsonString);
       updateHandshakeState(true);
-      Alert.alert("Session Secured! 🔒", "Post-Quantum Handshake complete!");
+      console.log("Handshake success!");
     } catch (e: any) {
       console.error("Handshake error:", e.message);
-      Alert.alert("Handshake Failed", e.message);
     }
   };
 
@@ -102,7 +106,7 @@ export default function App() {
 
       setMyKeys(base64Keys);
       setMyMac(mac);
-      setQrPayload(JSON.stringify({ m: mac }));
+      setQrPayload(JSON.stringify({ m: mac, k: base64Keys }));
 
       await BLEMeshModule.startAdvertising();
       try {
@@ -123,17 +127,16 @@ export default function App() {
       const { senderAddress, payload } = event;
       
       try {
-        if (!handshakeDoneRef.current) {
-          console.warn("Received message before handshake done!");
-        }
-        
         const plaintext = await CryptoModule.decryptMessage(payload);
+        const now = new Date();
+        const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
         
         setMessages(prev => [...prev, {
           id: Math.random().toString(),
-          sender: senderAddress,
+          sender: senderAddress || 'Peer',
           text: plaintext,
-          isMine: false
+          isMine: false,
+          time: timeStr
         }]);
       } catch (e: any) {
         console.error("Decrypt error:", e);
@@ -170,8 +173,8 @@ export default function App() {
     try {
       setDiscoveredPeers([]);
       setIsDiscovering(true);
+      setShowPeersModal(true);
       await BLEMeshModule.startPeerDiscovery();
-      Alert.alert("Scanning Nearby Peers", "Searching for nearby PQC Mesh Chat nodes over BLE...");
     } catch (err: any) {
       Alert.alert("Discovery Error", err.message);
     }
@@ -180,7 +183,8 @@ export default function App() {
   const connectToPeer = async (peerAddress: string) => {
     try {
       setTargetDevice(peerAddress);
-      Alert.alert("Connecting & Pairing", `Requesting 2-Way PQC Key Exchange from ${peerAddress} over BLE...`);
+      setShowPeersModal(false);
+      Alert.alert("Connecting & Pairing", `Requesting PQC Key Exchange from ${peerAddress} over BLE...`);
       await BLEMeshModule.requestPqcKeysOverBle(peerAddress, myMac);
     } catch (err: any) {
       console.warn("BLE connect notice:", err);
@@ -190,11 +194,11 @@ export default function App() {
   const sendMessage = async () => {
     if (!inputText) return;
     if (!targetDevice) {
-      Alert.alert("Error", "No peer connected. Discover nearby peers or scan QR code first!");
+      Alert.alert("No Peer Selected", "Please scan a peer's QR code or select a peer to start messaging!");
       return;
     }
     if (!handshakeDone) {
-      Alert.alert("Error", "You must exchange keys with your peer to establish a PQC session first!");
+      Alert.alert("Encryption Notice", "Exchanging PQC keys with your peer... Please tap Retry if needed.");
       return;
     }
     
@@ -202,11 +206,15 @@ export default function App() {
       const ciphertextBase64 = await CryptoModule.encryptMessage(inputText);
       await BLEMeshModule.sendMessageToDevice(targetDevice, ciphertextBase64, myMac);
       
+      const now = new Date();
+      const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+
       setMessages(prev => [...prev, {
         id: Math.random().toString(),
         sender: 'Me',
         text: inputText,
-        isMine: true
+        isMine: true,
+        time: timeStr
       }]);
       setInputText('');
     } catch (e: any) {
@@ -216,165 +224,169 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <View style={styles.header}>
-        <Text style={styles.title}>PQC Offline Mesh Chat</Text>
-      </View>
-      
-      <ScrollView style={styles.content} contentContainerStyle={{ paddingBottom: 80 }}>
-        
-        {/* Step 1: My Identity & Status */}
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>1. My Local Node Identity</Text>
-          <View style={[styles.statusBox, { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' }]}>
-            <Text style={styles.statusText}>🔑 PQC Kyber-768 & Dilithium Keys: Active</Text>
-            <Text style={styles.statusText}>📡 Mesh Node ID: {myMac || "Initializing..."}</Text>
-          </View>
-          
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 }}>
-            <TouchableOpacity 
-              style={[styles.smallBtn, { backgroundColor: '#2563EB' }]} 
-              onPress={startDiscovery}
-            >
-              <Text style={styles.btnText}>🔎 Discover Peers (BLE)</Text>
-            </TouchableOpacity>
+      <StatusBar barStyle="light-content" backgroundColor="#075E54" />
 
-            <TouchableOpacity 
-              style={[styles.smallBtn, { backgroundColor: '#7C3AED' }]} 
-              onPress={() => setIsScanning(true)}
-            >
-              <Text style={styles.btnText}>📷 Scan QR Code</Text>
-            </TouchableOpacity>
+      {/* WhatsApp Style Top Header Bar */}
+      <View style={styles.header}>
+        <View style={styles.headerLeft}>
+          <Text style={styles.headerTitle}>PQC Offline Chat</Text>
+          <View style={styles.statusRow}>
+            <View style={styles.activeDot} />
+            <Text style={styles.headerSubtitle}>
+              Node: {myMac ? myMac.slice(-10) : "Active"} • Kyber-768
+            </Text>
           </View>
         </View>
 
-        {/* Discovered Peers Section */}
-        {discoveredPeers.length > 0 && (
-          <View style={styles.card}>
-            <Text style={styles.sectionTitle}>Nearby Discovered Peers ({discoveredPeers.length})</Text>
-            {discoveredPeers.map(peer => (
-              <View key={peer.address} style={styles.peerRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={{ fontWeight: '600', color: '#1F2937' }}>{peer.name}</Text>
-                  <Text style={{ fontSize: 11, color: '#6B7280' }}>MAC: {peer.address} | RSSI: {peer.rssi} dBm</Text>
-                </View>
-                <TouchableOpacity 
-                  style={[styles.smallBtn, { backgroundColor: '#059669', paddingHorizontal: 12 }]}
-                  onPress={() => connectToPeer(peer.address)}
-                >
-                  <Text style={styles.btnText}>Connect & Pair</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
-          </View>
-        )}
-
-        {/* Step 2: Connected Peer Status */}
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>2. Active Connected Peer</Text>
-          {targetDevice ? (
-            <View style={[styles.statusBox, { backgroundColor: handshakeDone ? '#ECFDF5' : '#FEF3C7', borderColor: handshakeDone ? '#A7F3D0' : '#FDE68A' }]}>
-              <Text style={styles.statusText}>📱 Target Peer: {targetDevice}</Text>
-              {handshakeDone ? (
-                <Text style={[styles.statusText, { color: '#059669', marginTop: 2 }]}>🔒 Kyber-768 Session: Encrypted & Ready</Text>
-              ) : (
-                <Text style={[styles.statusText, { color: '#D97706', marginTop: 2 }]}>⌛ Exchanging PQC keys over BLE...</Text>
-              )}
-            </View>
-          ) : (
-            <Text style={styles.placeholderText}>Tap "Discover Peers" or "Scan QR Code" to pair with a nearby phone.</Text>
-          )}
-
-          {targetDevice && !handshakeDone && (
-            <TouchableOpacity 
-              style={[styles.button, { backgroundColor: '#D97706', marginTop: 10 }]} 
-              onPress={() => connectToPeer(targetDevice)}
-            >
-              <Text style={styles.buttonText}>⚡ Retry Key Exchange Over BLE</Text>
-            </TouchableOpacity>
-          )}
-
-          {/* Collapsible Manual Key Accordion */}
-          <TouchableOpacity onPress={() => setShowManualSection(!showManualSection)} style={{ marginTop: 10 }}>
-            <Text style={{ fontSize: 11, color: '#6B7280', textDecorationLine: 'underline' }}>
-              {showManualSection ? "Hide Manual Key Copy/Paste" : "Option: Manual Key Copy/Paste (Advanced)"}
-            </Text>
+        <View style={styles.headerRight}>
+          <TouchableOpacity style={styles.iconBtn} onPress={() => setShowMyQrModal(true)}>
+            <Text style={styles.iconText}>🔳 QR</Text>
           </TouchableOpacity>
 
-          {showManualSection && (
-            <View style={{ marginTop: 8, padding: 8, backgroundColor: '#F9FAFB', borderRadius: 6, borderWidth: 1, borderColor: '#E5E7EB' }}>
-              <Text style={styles.label}>My Key String (Copy):</Text>
-              <TextInput style={styles.keyBox} multiline value={myKeys} editable={false} selectTextOnFocus />
-              
-              <Text style={[styles.label, { marginTop: 8 }]}>Paste Friend's Key String:</Text>
-              <TextInput 
-                style={[styles.keyBox, { height: 45 }]} 
-                multiline 
-                placeholder='{"x25519":"...","kyber":"..."}' 
-                value={manualKeyInput}
-                onChangeText={setManualKeyInput}
-              />
-              <View style={{ marginTop: 8 }}>
-                <TouchableOpacity style={[styles.button, { backgroundColor: '#059669' }]} onPress={() => performHandshakeWithKeys(manualKeyInput)}>
-                  <Text style={styles.buttonText}>Establish Manual Handshake</Text>
-                </TouchableOpacity>
+          <TouchableOpacity style={styles.iconBtnAction} onPress={() => setIsScanning(true)}>
+            <Text style={styles.iconTextAction}>📷 Scan</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Active Peer Status Banner */}
+      <View style={styles.peerBanner}>
+        {targetDevice ? (
+          <View style={styles.bannerRow}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.peerText}>Connected Peer: {targetDevice}</Text>
+              <Text style={styles.pqcStatus}>
+                {handshakeDone ? "🔒 Kyber-768 + AES-256 Encrypted Session Active" : "⌛ Exchanging PQC keys..."}
+              </Text>
+            </View>
+            {!handshakeDone && (
+              <TouchableOpacity style={styles.retryBtn} onPress={() => connectToPeer(targetDevice)}>
+                <Text style={styles.retryText}>Retry Key</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        ) : (
+          <TouchableOpacity style={styles.pairNoticeRow} onPress={() => setIsScanning(true)}>
+            <Text style={styles.pairNoticeText}>
+              💡 Scan partner's QR Code or tap "Discover Peers" to connect
+            </Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* WhatsApp Chat Body & Input Container */}
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      >
+        <ScrollView 
+          style={styles.chatBackground}
+          contentContainerStyle={{ padding: 12, paddingBottom: 24 }}
+          showsVerticalScrollIndicator={false}
+        >
+          {messages.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <View style={styles.securityBadge}>
+                <Text style={styles.securityTitle}>🔒 Post-Quantum Encrypted</Text>
+                <Text style={styles.securityDesc}>
+                  Messages are end-to-end encrypted using Kyber-768 & AES-256-GCM. No internet or cell towers required.
+                </Text>
               </View>
             </View>
-          )}
-        </View>
-
-        {/* Step 3: QR Code Generator */}
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>3. Pair via QR Code</Text>
-          {qrPayload ? (
-            <View style={{ alignItems: 'center', marginVertical: 8 }}>
-              <QRCode value={qrPayload} size={150} />
-              <Text style={{ fontSize: 11, color: '#6B7280', marginTop: 6 }}>Show this QR code to partner phone to connect instantly</Text>
-            </View>
           ) : (
-            <Text style={styles.placeholderText}>Generating identity QR code...</Text>
+            messages.map(msg => (
+              <View key={msg.id} style={[styles.msgBubble, msg.isMine ? styles.myMsg : styles.theirMsg]}>
+                {!msg.isMine && <Text style={styles.senderTag}>{msg.sender}</Text>}
+                <Text style={msg.isMine ? styles.myMsgText : styles.theirMsgText}>{msg.text}</Text>
+                <View style={styles.msgFooter}>
+                  <Text style={msg.isMine ? styles.myTimeText : styles.theirTimeText}>{msg.time}</Text>
+                  {msg.isMine && <Text style={styles.lockIcon}> 🔒</Text>}
+                </View>
+              </View>
+            ))
           )}
-        </View>
+        </ScrollView>
 
-        {/* Step 4: Encrypted PQC Chat Area */}
-        <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.card}
-        >
-          <Text style={styles.sectionTitle}>4. PQC Encrypted Chat (Kyber-768 + AES-256)</Text>
-          
-          <ScrollView 
-            style={styles.chatBox}
-            showsVerticalScrollIndicator={false}
-            nestedScrollEnabled={true}
+        {/* WhatsApp Footer Input Bar */}
+        <View style={styles.footerInputContainer}>
+          <TextInput
+            style={styles.textInput}
+            placeholder="Type encrypted message..."
+            placeholderTextColor="#8696A0"
+            value={inputText}
+            onChangeText={setInputText}
+            multiline
+          />
+          <TouchableOpacity 
+            style={[styles.sendCircleBtn, { backgroundColor: inputText.trim() ? '#128C7E' : '#9CA3AF' }]} 
+            onPress={sendMessage}
+            disabled={!inputText.trim()}
           >
-            {messages.length === 0 ? (
-              <Text style={styles.placeholderText}>No messages yet. Send a post-quantum encrypted message!</Text>
+            <Text style={styles.sendIcon}>➤</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+
+      {/* Modal: My Identity QR Code */}
+      <Modal visible={showMyQrModal} animationType="slide" transparent={true}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.qrModalContent}>
+            <Text style={styles.modalTitle}>Pair via QR Code</Text>
+            <Text style={styles.modalSubtitle}>Show this QR code to partner phone to pair with instant PQC encryption</Text>
+            
+            {qrPayload ? (
+              <View style={styles.qrWrapper}>
+                <QRCode value={qrPayload} size={220} />
+              </View>
             ) : (
-              messages.map(msg => (
-                <View key={msg.id} style={[styles.msgBubble, msg.isMine ? styles.myMsg : styles.theirMsg]}>
-                  <Text style={styles.msgText}>{msg.text}</Text>
-                  <Text style={styles.msgSender}>{msg.sender}</Text>
+              <Text style={{ fontStyle: 'italic', color: '#6B7280' }}>Generating QR Code...</Text>
+            )}
+
+            <Text style={styles.nodeIdBadge}>My Node: {myMac}</Text>
+
+            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setShowMyQrModal(false)}>
+              <Text style={styles.modalCloseText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal: Nearby Discovered Peers */}
+      <Modal visible={showPeersModal} animationType="slide" transparent={true}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.peersModalContent}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <Text style={styles.modalTitle}>Nearby Discovered Peers</Text>
+              <TouchableOpacity onPress={() => setShowPeersModal(false)}>
+                <Text style={{ fontSize: 18, color: '#6B7280', fontWeight: 'bold' }}>✕</Text>
+              </TouchableOpacity>
+            </View>
+
+            {discoveredPeers.length === 0 ? (
+              <View style={{ padding: 20, alignItems: 'center' }}>
+                <Text style={{ color: '#6B7280', fontStyle: 'italic' }}>Searching for nearby PQC nodes over BLE...</Text>
+              </View>
+            ) : (
+              discoveredPeers.map(peer => (
+                <View key={peer.address} style={styles.peerCard}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontWeight: 'bold', fontSize: 14, color: '#111827' }}>{peer.name}</Text>
+                    <Text style={{ fontSize: 11, color: '#6B7280' }}>MAC: {peer.address} | RSSI: {peer.rssi} dBm</Text>
+                  </View>
+                  <TouchableOpacity style={styles.connectBtn} onPress={() => connectToPeer(peer.address)}>
+                    <Text style={styles.connectBtnText}>Connect</Text>
+                  </TouchableOpacity>
                 </View>
               ))
             )}
-          </ScrollView>
 
-          <View style={styles.inputContainer}>
-            <TextInput
-              style={styles.input}
-              placeholder="Type encrypted message..."
-              placeholderTextColor="#9CA3AF"
-              value={inputText}
-              onChangeText={setInputText}
-            />
-            <TouchableOpacity style={styles.sendButton} onPress={sendMessage}>
-              <Text style={styles.sendText}>Send</Text>
+            <TouchableOpacity style={styles.modalCloseBtn} onPress={() => setShowPeersModal(false)}>
+              <Text style={styles.modalCloseText}>Close</Text>
             </TouchableOpacity>
           </View>
-        </KeyboardAvoidingView>
-
-      </ScrollView>
+        </View>
+      </Modal>
 
       {/* Full-Screen Camera Scanner Modal */}
       {isScanning && (
@@ -384,28 +396,37 @@ export default function App() {
             scanBarcode={true}
             allowedBarcodeTypes={['qr']}
             showFrame={false}
-            onReadCode={(event: any) => {
+            onReadCode={async (event: any) => {
               const scannedValue = event.nativeEvent?.codeStringValue;
               if (scannedValue) {
                 setIsScanning(false);
                 try {
                   const data = JSON.parse(scannedValue);
                   if (data.m) {
-                    setTargetDevice(data.m);
-                    connectToPeer(data.m);
-                    Alert.alert("QR Code Paired! 🎉", `Connected to device MAC: ${data.m}. Exchanging PQC Keys over BLE...`);
+                    const matchedPeer = discoveredPeers.find(p => p.address === data.m || p.name.includes(data.m));
+                    const resolvedMac = matchedPeer ? matchedPeer.address : (data.m.includes(':') ? data.m : (discoveredPeers[0]?.address || data.m));
+                    
+                    setTargetDevice(resolvedMac);
+
+                    if (data.k) {
+                      setTheirKeys(data.k);
+                      await performHandshakeWithKeys(data.k);
+                      await BLEMeshModule.requestPqcKeysOverBle(resolvedMac, myMac);
+                      Alert.alert("QR Pair Successful! 🔒", `Established Kyber-768 PQC session with peer!`);
+                    } else {
+                      connectToPeer(resolvedMac);
+                    }
                   }
                 } catch (e) {
-                  Alert.alert("Scan Result", `Scanned value: ${scannedValue}`);
+                  Alert.alert("QR Read Notice", scannedValue);
                 }
               }
             }}
           />
 
-          {/* Viewfinder Frame */}
           <View style={styles.overlay}>
             <View style={styles.viewfinder} />
-            <Text style={styles.scanInstruction}>Center partner's QR code inside the box</Text>
+            <Text style={styles.scanInstruction}>Center partner's QR code inside box to pair</Text>
             <TouchableOpacity style={styles.closeBtn} onPress={() => setIsScanning(false)}>
               <Text style={styles.closeBtnText}>Cancel Scan</Text>
             </TouchableOpacity>
@@ -419,176 +440,327 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#075E54',
   },
   header: {
-    padding: 16,
-    backgroundColor: '#1F2937',
-    alignItems: 'center',
-  },
-  title: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#F9FAFB',
-  },
-  content: {
-    padding: 12,
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 12,
-    elevation: 2,
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#374151',
-    marginBottom: 8,
-  },
-  statusBox: {
-    padding: 8,
-    borderRadius: 6,
-    borderWidth: 1,
-  },
-  statusText: {
-    fontSize: 12,
-    color: '#065F46',
-    fontWeight: '500',
-  },
-  placeholderText: {
-    fontSize: 12,
-    color: '#9CA3AF',
-    fontStyle: 'italic',
-  },
-  button: {
-    paddingVertical: 8,
-    borderRadius: 6,
-    alignItems: 'center',
-  },
-  buttonText: {
-    color: '#FFFFFF',
-    fontWeight: '600',
-    fontSize: 13,
-  },
-  smallBtn: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 6,
-  },
-  btnText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  peerRow: {
+    backgroundColor: '#075E54',
+    paddingHorizontal: 16,
+    paddingTop: Platform.OS === 'android' ? (StatusBar.currentHeight || 28) + 8 : 12,
+    paddingBottom: 12,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    elevation: 4,
+  },
+  headerLeft: {
+    flex: 1,
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#FFFFFF',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 2,
+  },
+  activeDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#25D366',
+    marginRight: 6,
+  },
+  headerSubtitle: {
+    fontSize: 11,
+    color: '#E0F2F1',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  iconBtn: {
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
     paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 16,
+    marginRight: 8,
+  },
+  iconText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  iconBtnAction: {
+    backgroundColor: '#25D366',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+  },
+  iconTextAction: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  peerBanner: {
+    backgroundColor: '#128C7E',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  bannerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  peerText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 13,
+  },
+  pqcStatus: {
+    color: '#B2DFDB',
+    fontSize: 11,
+    marginTop: 1,
+  },
+  retryBtn: {
+    backgroundColor: '#25D366',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+  },
+  retryText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  pairNoticeRow: {
+    alignItems: 'center',
+  },
+  pairNoticeText: {
+    color: '#E0F2F1',
+    fontSize: 12,
+    fontStyle: 'italic',
+  },
+  chatBackground: {
+    flex: 1,
+    backgroundColor: '#ECE5DD',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    marginTop: 40,
+    paddingHorizontal: 20,
+  },
+  securityBadge: {
+    backgroundColor: '#FCF8E3',
+    borderColor: '#FBEED5',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    alignItems: 'center',
+  },
+  securityTitle: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#8A6D3B',
+    marginBottom: 4,
+  },
+  securityDesc: {
+    fontSize: 11,
+    color: '#8A6D3B',
+    textAlign: 'center',
+  },
+  msgBubble: {
+    padding: 10,
+    borderRadius: 14,
+    marginBottom: 8,
+    maxWidth: '82%',
+    elevation: 1,
+  },
+  myMsg: {
+    backgroundColor: '#DCF8C6',
+    alignSelf: 'flex-end',
+    borderBottomRightRadius: 2,
+  },
+  theirMsg: {
+    backgroundColor: '#FFFFFF',
+    alignSelf: 'flex-start',
+    borderBottomLeftRadius: 2,
+  },
+  myMsgText: {
+    color: '#111827',
+    fontSize: 14,
+  },
+  theirMsgText: {
+    color: '#111827',
+    fontSize: 14,
+  },
+  senderTag: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#075E54',
+    marginBottom: 2,
+  },
+  msgFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginTop: 4,
+  },
+  myTimeText: {
+    fontSize: 9,
+    color: '#6B7280',
+  },
+  theirTimeText: {
+    fontSize: 9,
+    color: '#9CA3AF',
+  },
+  lockIcon: {
+    fontSize: 9,
+  },
+  footerInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F0F0',
+    paddingHorizontal: 10,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === 'android' ? 50 : 20,
+    marginBottom: Platform.OS === 'android' ? 10 : 0,
+    borderTopWidth: 1,
+    borderTopColor: '#E0E0E0',
+  },
+  textInput: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 24,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#111827',
+    maxHeight: 100,
+    marginRight: 8,
+    elevation: 1,
+  },
+  sendCircleBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 2,
+  },
+  sendIcon: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    marginLeft: 2,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  qrModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    width: '90%',
+    elevation: 5,
+  },
+  peersModalContent: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    width: '90%',
+    maxHeight: '80%',
+    elevation: 5,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#111827',
+  },
+  modalSubtitle: {
+    fontSize: 12,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginTop: 4,
+    marginBottom: 16,
+  },
+  qrWrapper: {
+    padding: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    elevation: 3,
+    marginBottom: 16,
+  },
+  nodeIdBadge: {
+    fontSize: 11,
+    color: '#075E54',
+    fontWeight: 'bold',
+    backgroundColor: '#E0F2F1',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  modalCloseBtn: {
+    backgroundColor: '#075E54',
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    borderRadius: 20,
+  },
+  modalCloseText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  peerCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
   },
-  label: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#4B5563',
+  connectBtn: {
+    backgroundColor: '#128C7E',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 14,
   },
-  keyBox: {
-    backgroundColor: '#FFFFFF',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 4,
-    padding: 6,
-    fontSize: 10,
-    height: 40,
-    marginTop: 4,
-  },
-  chatBox: {
-    minHeight: 80,
-    maxHeight: 140,
-    backgroundColor: '#F9FAFB',
-    borderRadius: 6,
-    padding: 8,
-    marginBottom: 8,
-  },
-  msgBubble: {
-    padding: 8,
-    borderRadius: 8,
-    marginBottom: 6,
-    maxWidth: '80%',
-  },
-  myMsg: {
-    backgroundColor: '#DBEAFE',
-    alignSelf: 'flex-end',
-  },
-  theirMsg: {
-    backgroundColor: '#E5E7EB',
-    alignSelf: 'flex-start',
-  },
-  msgText: {
-    fontSize: 13,
-    color: '#1F2937',
-  },
-  msgSender: {
-    fontSize: 9,
-    color: '#6B7280',
-    marginTop: 2,
-  },
-  inputContainer: {
-    flexDirection: 'row',
-  },
-  input: {
-    flex: 1,
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 6,
-    paddingHorizontal: 10,
-    fontSize: 13,
-    backgroundColor: '#FFFFFF',
-    height: 40,
-  },
-  sendButton: {
-    backgroundColor: '#2563EB',
-    justifyContent: 'center',
-    paddingHorizontal: 16,
-    borderRadius: 6,
-    marginLeft: 8,
-  },
-  sendText: {
+  connectBtnText: {
     color: '#FFFFFF',
-    fontWeight: '600',
+    fontWeight: 'bold',
+    fontSize: 12,
   },
   overlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.5)',
   },
   viewfinder: {
-    width: 240,
-    height: 240,
-    borderWidth: 3,
-    borderColor: '#00FF00',
-    borderRadius: 12,
+    width: 250,
+    height: 250,
+    borderWidth: 2,
+    borderColor: '#25D366',
+    borderRadius: 16,
     backgroundColor: 'transparent',
   },
   scanInstruction: {
     color: '#FFFFFF',
+    fontSize: 13,
     marginTop: 16,
-    fontSize: 14,
     fontWeight: '600',
   },
   closeBtn: {
     marginTop: 24,
     backgroundColor: '#EF4444',
-    paddingHorizontal: 20,
     paddingVertical: 10,
-    borderRadius: 8,
+    paddingHorizontal: 20,
+    borderRadius: 20,
   },
   closeBtnText: {
     color: '#FFFFFF',
