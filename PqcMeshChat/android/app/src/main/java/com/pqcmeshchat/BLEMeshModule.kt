@@ -363,7 +363,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     currentChunkIndex++
                     mainHandler.postDelayed({
                         writeNextChunk(gatt)
-                    }, 20)
+                    }, 25)
                 } else {
                     Log.e("BLEMeshModule", "Failed to write chunk $currentChunkIndex, status=$status")
                     gatt.disconnect()
@@ -378,31 +378,18 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     if (characteristic != null) {
                         val serializedChunk = serializeChunk(chunks[currentChunkIndex])
                         characteristic.value = serializedChunk
-                        characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                        
+                        characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
                         val success = gatt.writeCharacteristic(characteristic)
-                        Log.i("BLEMeshModule", "Writing chunk $currentChunkIndex to GATT characteristic (success=$success)...")
-                        
-                        if (characteristic.writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) {
-                            currentChunkIndex++
-                            if (currentChunkIndex < chunks.size) {
-                                mainHandler.postDelayed({
-                                    writeNextChunk(gatt)
-                                }, 40)
-                            } else {
-                                Log.i("BLEMeshModule", "All ${chunks.size} chunks written successfully!")
-                                mainHandler.postDelayed({
-                                    gatt.disconnect()
-                                }, 1500)
-                            }
-                        }
+                        Log.i("BLEMeshModule", "Writing chunk $currentChunkIndex/${chunks.size} (success=$success)...")
                     } else {
                         Log.e("BLEMeshModule", "Target GATT Service or Characteristic not found on device!")
                         gatt.disconnect()
                     }
                 } else {
                     Log.i("BLEMeshModule", "All ${chunks.size} chunks sent successfully!")
-                    gatt.disconnect()
+                    mainHandler.postDelayed({
+                        gatt.disconnect()
+                    }, 500)
                 }
             }
         }
