@@ -286,6 +286,12 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     }
 
     private fun sendMessageToDeviceInternal(deviceAddress: String, message: String, promise: Promise?) {
+        try {
+            stopPeerDiscovery()
+        } catch (e: Exception) {
+            Log.e("BLEMeshModule", "Error stopping discovery: ${e.message}")
+        }
+
         val device = bluetoothAdapter?.getRemoteDevice(deviceAddress)
         if (device == null) {
             promise?.reject("INVALID_DEVICE", "Could not find device $deviceAddress")
@@ -304,6 +310,12 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         val gattCallback = object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                 Log.i("BLEMeshModule", "onConnectionStateChange: status=$status, newState=$newState")
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    Log.e("BLEMeshModule", "GATT connection error status=$status, closing connection...")
+                    gatt.close()
+                    return
+                }
+
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     Log.i("BLEMeshModule", "Connected to GATT server $deviceAddress")
                     val mtuReq = gatt.requestMtu(512)
