@@ -1,97 +1,116 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# PQC Mesh Chat 🔒📱
 
-# Getting Started
+An offline, decentralized, end-to-end encrypted mobile chat application powered by **Post-Quantum Cryptography (PQC)** and **Bluetooth Low Energy (BLE) Mesh Networking**.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+---
 
-## Step 1: Start Metro
+## 🌟 Key Features
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+* 🔐 **Hybrid Post-Quantum Cryptography (PQC)**: Combines classical **X25519** ECDH with NIST-standardized **Kyber / ML-KEM** via compiled Rust core native bindings (`uniffi` / `JNA`).
+* 📡 **Offline BLE Mesh Networking**: Fully offline peer-to-peer communication using Android Bluetooth Low Energy GATT Server & Advertising capabilities with custom MTU chunking and packet reassembly.
+* 📷 **Seamless QR Code Key & MAC Exchange**: Scan your partner's QR code to automatically exchange PQC public key bundles and Bluetooth MAC addresses out-of-band—zero manual typing required.
+* 🔒 **Authenticated End-to-End Encryption**: All messages are encrypted locally using **AES-256-GCM** derived from the post-quantum shared secret before being chunked and transmitted over BLE.
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+---
 
-```sh
-# Using npm
-npm start
+## 🏗️ Technical Architecture
 
-# OR using Yarn
-yarn start
+```
+┌─────────────────────────────────────────────────────────┐
+│                     React Native UI                     │
+│               (TypeScript / App.tsx)                    │
+└───────────┬─────────────────────────────────┬───────────┘
+            │                                 │
+   JNI / React Native               JNI / React Native
+      Native Module                    Native Module
+            │                                 │
+┌───────────▼───────────┐         ┌───────────▼───────────┐
+│     CryptoModule      │         │     BLEMeshModule     │
+│       (Kotlin)        │         │       (Kotlin)        │
+└───────────┬───────────┘         └───────────┬───────────┘
+            │                                 │
+      UniFFI / JNA                      UniFFI / JNA
+            │                                 │
+┌───────────▼─────────────────────────────────▼───────────┐
+│                       Rust Core                         │
+│   (Kyber / ML-KEM, X25519, AES-256-GCM, Chunking Engine)│
+└─────────────────────────────────────────────────────────┘
 ```
 
-## Step 2: Build and run your app
+---
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+## 🚀 Getting Started
 
-### Android
+### Prerequisites
 
-```sh
-# Using npm
-npm run android
+* **Node.js** >= 18
+* **Android SDK** (API Level 34+)
+* **JDK** (Java 17 or Java 21)
+* **Android Device** with Bluetooth LE support and Camera permissions enabled
 
-# OR using Yarn
-yarn android
+---
+
+## 🛠️ Building & Installation
+
+### 1. Clone & Install Dependencies
+
+```bash
+git clone https://github.com/tawassulgoharellahi/pqc-offline-mesh-chat.git
+cd pqc-offline-mesh-chat
+npm install
 ```
 
-### iOS
+### 2. Build Release APK
 
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
+To compile the native C++/Rust bindings and generate a Release APK:
 
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
-
-```sh
-bundle install
+```bash
+cd android
+./gradlew assembleRelease
 ```
 
-Then, and every time you update your native dependencies, run:
+The output APK will be located at:
+`android/app/build/outputs/apk/release/app-release.apk`
 
-```sh
-bundle exec pod install
+### 3. Install on Device via ADB
+
+Connect your Android phone via USB with USB Debugging enabled, then run:
+
+```bash
+adb install android/app/build/outputs/apk/release/app-release.apk
 ```
 
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
+---
 
-```sh
-# Using npm
-npm run ios
+## 📖 User Workflow & Usage
 
-# OR using Yarn
-yarn ios
-```
+1. **Step 1: Generate PQC Keys**
+   * Open the app on both devices and tap **"Generate PQC Keys"**.
+   * Device 1 will display a unified QR Code containing its public key bundle and Bluetooth MAC address.
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+2. **Step 2: Automated Out-of-Band Key & MAC Exchange**
+   * On Device 2, tap **"Scan Partner's QR Code"** and scan the QR code displayed on Device 1.
+   * Device 2 automatically stores Device 1's public keys and MAC address in background state.
+   * Repeat the scan in reverse so Device 1 scans Device 2's QR code.
+   * Tap **"Initiate Secure Handshake"** to derive the Post-Quantum Shared Secret.
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+3. **Step 3: Start Mesh Node**
+   * Tap **"Start BLE GATT Server & Advertising"** on both devices.
 
-## Step 3: Modify your app
+4. **Step 4: Offline Encrypted Chat**
+   * Type your secret message in the input box at the bottom and tap **"Send"**.
+   * The message is encrypted locally using the PQC session keys, split into BLE chunks, transmitted over the air, reassembled by the receiver, and decrypted.
 
-Now that you have successfully run the app, let's make changes!
+---
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+## 🛡️ Security Considerations
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
+* **Post-Quantum Resilience**: Protects against future quantum computer decryption ("harvest now, decrypt later" attacks).
+* **Air-Gapped & Offline**: No Internet, Wi-Fi, or central servers are required.
+* **Privacy-First**: No persistent tracking or hardcoded identifiers.
 
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
+---
 
-## Congratulations! :tada:
+## 📄 License
 
-You've successfully run and modified your React Native App. :partying_face:
-
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+This project is licensed under the MIT License.
