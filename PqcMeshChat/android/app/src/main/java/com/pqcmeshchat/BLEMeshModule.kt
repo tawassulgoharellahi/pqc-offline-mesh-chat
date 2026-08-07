@@ -93,12 +93,16 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 
                 if (characteristic.uuid == CHAR_UUID) {
                     try {
+                        if (responseNeeded) {
+                            gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+                        }
+
                         val chunk = deserializeChunk(value)
                         val reassembled = reassemblyBuffer.addChunk(chunk)
                         
                         if (reassembled != null) {
                             val rawString = String(reassembled, Charsets.UTF_8)
-                            Log.d("BLEMeshModule", "Reassembled complete message payload: $rawString")
+                            Log.i("BLEMeshModule", "Reassembled complete message payload: $rawString")
                             
                             var type = "MSG"
                             var dest = ""
@@ -122,7 +126,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                             }
 
                             if (type == "KEY_REQ") {
-                                Log.d("BLEMeshModule", "Received KEY_REQ from $sender")
+                                Log.i("BLEMeshModule", "Received KEY_REQ from $sender")
                                 if (keysData.isNotEmpty()) {
                                     val map = Arguments.createMap()
                                     map.putString("senderAddress", device.address)
@@ -140,16 +144,13 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                     sendMessageToDeviceInternal(device.address, keyRespJson, null)
                                 }
                             } else if (type == "KEY_RESP") {
-                                Log.d("BLEMeshModule", "Received KEY_RESP from $sender")
+                                Log.i("BLEMeshModule", "Received KEY_RESP from $sender")
                                 val map = Arguments.createMap()
                                 map.putString("senderAddress", device.address)
                                 map.putString("keys", keysData)
                                 sendEvent("onHandshakeKeysReceived", map)
                             } else {
                                 if (seenMsgIds.contains(msgId)) {
-                                    if (responseNeeded) {
-                                        gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-                                    }
                                     return
                                 }
                                 seenMsgIds.add(msgId)
@@ -161,7 +162,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                               myMac.startsWith("NODE_") || 
                                               dest.startsWith("NODE_")
 
-                                Log.d("BLEMeshModule", "Message received on GATT Server. isForMe=$isForMe, dest=$dest, myMac=$myMac")
+                                Log.i("BLEMeshModule", "Message received on GATT Server. isForMe=$isForMe, dest=$dest, myMac=$myMac")
 
                                 if (isForMe) {
                                     val map = Arguments.createMap()
@@ -183,15 +184,8 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                 }
                             }
                         }
-                        
-                        if (responseNeeded) {
-                            gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
-                        }
                     } catch (e: Exception) {
                         Log.e("BLEMeshModule", "Error processing chunk: ${e.message}")
-                        if (responseNeeded) {
-                            gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, 0, null)
-                        }
                     }
                 }
             }
@@ -309,29 +303,29 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
         val gattCallback = object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-                Log.d("BLEMeshModule", "onConnectionStateChange: status=$status, newState=$newState")
+                Log.i("BLEMeshModule", "onConnectionStateChange: status=$status, newState=$newState")
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    Log.d("BLEMeshModule", "Connected to GATT server $deviceAddress")
+                    Log.i("BLEMeshModule", "Connected to GATT server $deviceAddress")
                     val mtuReq = gatt.requestMtu(512)
                     if (!mtuReq) {
-                        Log.d("BLEMeshModule", "requestMtu failed, discovering services immediately...")
+                        Log.i("BLEMeshModule", "requestMtu failed, discovering services immediately...")
                         gatt.discoverServices()
                     } else {
                         mainHandler.postDelayed({
                             if (!servicesDiscovered) {
-                                Log.d("BLEMeshModule", "MTU timeout fallback, discovering services...")
+                                Log.i("BLEMeshModule", "MTU timeout fallback, discovering services...")
                                 gatt.discoverServices()
                             }
                         }, 300)
                     }
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    Log.d("BLEMeshModule", "Disconnected from GATT server $deviceAddress")
+                    Log.i("BLEMeshModule", "Disconnected from GATT server $deviceAddress")
                     gatt.close()
                 }
             }
             
             override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-                Log.d("BLEMeshModule", "onMtuChanged: mtu=$mtu, status=$status")
+                Log.i("BLEMeshModule", "onMtuChanged: mtu=$mtu, status=$status")
                 if (!servicesDiscovered) {
                     servicesDiscovered = true
                     gatt.discoverServices()
@@ -339,7 +333,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             }
 
             override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-                Log.d("BLEMeshModule", "onServicesDiscovered: status=$status")
+                Log.i("BLEMeshModule", "onServicesDiscovered: status=$status")
                 servicesDiscovered = true
                 if (status == BluetoothGatt.GATT_SUCCESS) {
                     writeNextChunk(gatt)
@@ -350,10 +344,12 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             }
             
             override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-                Log.d("BLEMeshModule", "onCharacteristicWrite: chunk=$currentChunkIndex/${chunks.size}, status=$status")
+                Log.i("BLEMeshModule", "onCharacteristicWrite: chunk=$currentChunkIndex/${chunks.size}, status=$status")
                 if (status == BluetoothGatt.GATT_SUCCESS) {
                     currentChunkIndex++
-                    writeNextChunk(gatt)
+                    mainHandler.postDelayed({
+                        writeNextChunk(gatt)
+                    }, 20)
                 } else {
                     Log.e("BLEMeshModule", "Failed to write chunk $currentChunkIndex, status=$status")
                     gatt.disconnect()
@@ -368,21 +364,36 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     if (characteristic != null) {
                         val serializedChunk = serializeChunk(chunks[currentChunkIndex])
                         characteristic.value = serializedChunk
-                        characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                        gatt.writeCharacteristic(characteristic)
-                        Log.d("BLEMeshModule", "Writing chunk $currentChunkIndex to GATT characteristic...")
+                        characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                        
+                        val success = gatt.writeCharacteristic(characteristic)
+                        Log.i("BLEMeshModule", "Writing chunk $currentChunkIndex to GATT characteristic (success=$success)...")
+                        
+                        if (characteristic.writeType == BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE) {
+                            currentChunkIndex++
+                            if (currentChunkIndex < chunks.size) {
+                                mainHandler.postDelayed({
+                                    writeNextChunk(gatt)
+                                }, 30)
+                            } else {
+                                Log.i("BLEMeshModule", "All ${chunks.size} chunks written successfully!")
+                                mainHandler.postDelayed({
+                                    gatt.disconnect()
+                                }, 200)
+                            }
+                        }
                     } else {
                         Log.e("BLEMeshModule", "Target GATT Service or Characteristic not found on device!")
                         gatt.disconnect()
                     }
                 } else {
-                    Log.d("BLEMeshModule", "All ${chunks.size} chunks sent successfully!")
+                    Log.i("BLEMeshModule", "All ${chunks.size} chunks sent successfully!")
                     gatt.disconnect()
                 }
             }
         }
         
-        Log.d("BLEMeshModule", "Connecting GATT to device $deviceAddress via TRANSPORT_LE...")
+        Log.i("BLEMeshModule", "Connecting GATT to device $deviceAddress via TRANSPORT_LE...")
         device.connectGatt(reactApplicationContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
         promise?.resolve("Message transmission started")
     }
@@ -427,7 +438,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     private val advertiseCallback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
             super.onStartSuccess(settingsInEffect)
-            Log.d("BLEMeshModule", "Advertising onStartSuccess")
+            Log.i("BLEMeshModule", "Advertising onStartSuccess")
         }
 
         override fun onStartFailure(errorCode: Int) {
