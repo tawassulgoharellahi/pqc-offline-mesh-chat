@@ -247,11 +247,11 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     }
 
     @ReactMethod
-    fun requestPqcKeysOverBle(deviceAddress: String, promise: Promise) {
+    fun requestPqcKeysOverBle(deviceAddress: String, senderMacAddress: String, promise: Promise) {
         val myKeys = CryptoModule.identityKeys?.exportPublicKeysBase64() ?: ""
         val reqJson = JSONObject().apply {
             put("type", "KEY_REQ")
-            put("sender", bluetoothAdapter?.address ?: "02:00:00:00:00:00")
+            put("sender", if (senderMacAddress.isNotEmpty()) senderMacAddress else (bluetoothAdapter?.address ?: "02:00:00:00:00:00"))
             put("keys", myKeys)
         }.toString()
         sendMessageToDeviceInternal(deviceAddress, reqJson, promise)
@@ -400,11 +400,11 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     }
 
     @ReactMethod
-    fun sendMessageToDevice(deviceAddress: String, message: String, promise: Promise) {
+    fun sendMessageToDevice(deviceAddress: String, message: String, senderMacAddress: String, promise: Promise) {
         val envelope = JSONObject().apply {
             put("type", "MSG")
             put("dest", deviceAddress)
-            put("sender", bluetoothAdapter?.address ?: "02:00:00:00:00:00")
+            put("sender", if (senderMacAddress.isNotEmpty()) senderMacAddress else (bluetoothAdapter?.address ?: "02:00:00:00:00:00"))
             put("msgId", UUID.randomUUID().toString())
             put("ttl", 5)
             put("payload", message)

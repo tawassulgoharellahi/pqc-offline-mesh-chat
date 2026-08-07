@@ -15,6 +15,7 @@ import {
   PermissionsAndroid,
   Platform,
   ScrollView,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { Camera } from 'react-native-camera-kit';
 import QRCode from 'react-native-qrcode-svg';
@@ -175,7 +176,7 @@ export default function App() {
     try {
       setTargetDevice(peerAddress);
       Alert.alert("Connecting & Pairing", `Requesting 2-Way PQC Key Exchange from ${peerAddress} over BLE...`);
-      await BLEMeshModule.requestPqcKeysOverBle(peerAddress);
+      await BLEMeshModule.requestPqcKeysOverBle(peerAddress, myMac);
     } catch (err: any) {
       console.warn("BLE connect notice:", err);
     }
@@ -194,7 +195,7 @@ export default function App() {
     
     try {
       const ciphertextBase64 = await CryptoModule.encryptMessage(inputText);
-      await BLEMeshModule.sendMessageToDevice(targetDevice, ciphertextBase64);
+      await BLEMeshModule.sendMessageToDevice(targetDevice, ciphertextBase64, myMac);
       
       setMessages(prev => [...prev, {
         id: Math.random().toString(),
@@ -331,10 +332,17 @@ export default function App() {
         </View>
 
         {/* Step 4: Encrypted PQC Chat Area */}
-        <View style={styles.card}>
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.card}
+        >
           <Text style={styles.sectionTitle}>4. PQC Encrypted Chat (Kyber-768 + AES-256)</Text>
           
-          <View style={styles.chatBox}>
+          <ScrollView 
+            style={styles.chatBox}
+            showsVerticalScrollIndicator={false}
+            nestedScrollEnabled={true}
+          >
             {messages.length === 0 ? (
               <Text style={styles.placeholderText}>No messages yet. Send a post-quantum encrypted message!</Text>
             ) : (
@@ -345,7 +353,7 @@ export default function App() {
                 </View>
               ))
             )}
-          </View>
+          </ScrollView>
 
           <View style={styles.inputContainer}>
             <TextInput
@@ -359,7 +367,7 @@ export default function App() {
               <Text style={styles.sendText}>Send</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
 
       </ScrollView>
 
