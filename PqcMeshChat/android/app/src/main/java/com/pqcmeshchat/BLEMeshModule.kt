@@ -123,6 +123,15 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
                             if (type == "KEY_REQ") {
                                 Log.d("BLEMeshModule", "Received KEY_REQ from $sender")
+                                // 1. Deliver sender's keys to local JS to complete 2-way handshake
+                                if (keysData.isNotEmpty()) {
+                                    val map = Arguments.createMap()
+                                    map.putString("senderAddress", device.address)
+                                    map.putString("keys", keysData)
+                                    sendEvent("onHandshakeKeysReceived", map)
+                                }
+
+                                // 2. Reply with local keys in KEY_RESP
                                 val myKeys = CryptoModule.identityKeys?.exportPublicKeysBase64() ?: ""
                                 if (myKeys.isNotEmpty()) {
                                     val keyRespJson = JSONObject().apply {
@@ -238,9 +247,11 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
     @ReactMethod
     fun requestPqcKeysOverBle(deviceAddress: String, promise: Promise) {
+        val myKeys = CryptoModule.identityKeys?.exportPublicKeysBase64() ?: ""
         val reqJson = JSONObject().apply {
             put("type", "KEY_REQ")
             put("sender", bluetoothAdapter?.address ?: "02:00:00:00:00:00")
+            put("keys", myKeys)
         }.toString()
         sendMessageToDeviceInternal(deviceAddress, reqJson, promise)
     }
@@ -301,7 +312,6 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                         Log.d("BLEMeshModule", "requestMtu failed, discovering services immediately...")
                         gatt.discoverServices()
                     } else {
-                        // Safety timeout: if MTU callback never fires, discover services after 300ms
                         mainHandler.postDelayed({
                             if (!servicesDiscovered) {
                                 Log.d("BLEMeshModule", "MTU timeout fallback, discovering services...")
