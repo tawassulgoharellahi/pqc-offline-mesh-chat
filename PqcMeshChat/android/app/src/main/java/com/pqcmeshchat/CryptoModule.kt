@@ -22,7 +22,9 @@ class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     @ReactMethod
     fun generateKeys(promise: Promise) {
         try {
-            identityKeys = IdentityKeys.generate()
+            if (identityKeys == null) {
+                identityKeys = IdentityKeys.generate()
+            }
             promise.resolve("Keys Generated Successfully")
         } catch (e: Exception) {
             promise.reject("KEY_GEN_FAILED", e)
@@ -62,6 +64,8 @@ class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
 
             // Derive master key
             val masterKey = performHybridHandshake(keys, theirX25519Bytes, theirKyberBytes)
+            val keyFingerprint = Base64.encodeToString(masterKey.take(6).toByteArray(), Base64.NO_WRAP)
+            android.util.Log.i("CryptoModule", "Derived PQC MasterKey fingerprint: $keyFingerprint")
             
             // Initialize chat session
             chatSession = ChatSession(masterKey)

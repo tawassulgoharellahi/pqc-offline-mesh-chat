@@ -399,11 +399,33 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     if (retryCount < 2) {
                         retryCount++
                         mainHandler.postDelayed({
-                            val freshMac = discoveredPeers.keys.firstOrNull { isValidTargetMac(it) } ?: targetMac
-                            Log.i("BLEMeshModule", "Retrying GATT connection (attempt $retryCount) to $freshMac...")
-                            val retryDevice = bluetoothAdapter?.getRemoteDevice(freshMac)
+                            discoveredPeers.clear()
+                            val scanner = bluetoothAdapter?.bluetoothLeScanner
+                            var freshMac: String? = null
+                            if (scanner != null) {
+                                val latch = java.util.concurrent.CountDownLatch(1)
+                                val scanCb = object : ScanCallback() {
+                                    override fun onScanResult(callbackType: Int, result: ScanResult) {
+                                        val addr = result.device.address
+                                        if (isValidTargetMac(addr)) {
+                                            freshMac = addr
+                                            latch.countDown()
+                                        }
+                                    }
+                                }
+                                try {
+                                    scanner.startScan(scanCb)
+                                    latch.await(800, java.util.concurrent.TimeUnit.MILLISECONDS)
+                                    scanner.stopScan(scanCb)
+                                } catch (e: Exception) {
+                                    Log.w("BLEMeshModule", "Retry scan exception: ${e.message}")
+                                }
+                            }
+                            val finalMac = freshMac ?: targetMac
+                            Log.i("BLEMeshModule", "Retrying GATT connection (attempt $retryCount) to $finalMac...")
+                            val retryDevice = bluetoothAdapter?.getRemoteDevice(finalMac)
                             retryDevice?.connectGatt(reactApplicationContext, false, this, BluetoothDevice.TRANSPORT_LE)
-                        }, 450)
+                        }, 300)
                     } else {
                         promise?.reject("GATT_CONNECT_FAILED", "GATT connection failed with status $status")
                     }
@@ -487,7 +509,9 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         }
         
         Log.i("BLEMeshModule", "Connecting GATT to device $targetMac via TRANSPORT_LE...")
-        device.connectGatt(reactApplicationContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+        mainHandler.postDelayed({
+            device.connectGatt(reactApplicationContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+        }, 300)
         promise?.resolve("Message transmission started")
     }
 

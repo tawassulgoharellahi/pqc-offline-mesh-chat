@@ -534,11 +534,14 @@ export default function App() {
 
                 if (data && data.m) {
                   let resolvedMac = data.m;
-                  const matchedPeer = discoveredPeers.find(p => p.address === data.m || p.name.includes(data.m));
+                  const cleanNodeId = data.m.replace("NODE_", "").replace("_", "").toLowerCase();
+                  const matchedPeer = discoveredPeers.find(p => 
+                    p.address === data.m || 
+                    p.name.toLowerCase().replace(" ", "").includes(cleanNodeId) || 
+                    cleanNodeId.includes(p.name.toLowerCase().replace(" ", ""))
+                  );
                   if (matchedPeer) {
                     resolvedMac = matchedPeer.address;
-                  } else if (!data.m.includes(':') && discoveredPeers.length > 0) {
-                    resolvedMac = discoveredPeers[0].address;
                   }
                   
                   setTargetDevice(resolvedMac);
