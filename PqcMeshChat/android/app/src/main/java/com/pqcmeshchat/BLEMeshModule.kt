@@ -127,9 +127,10 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
                             if (type == "KEY_REQ") {
                                 Log.i("BLEMeshModule", "Received KEY_REQ from $sender")
+                                val senderNode = if (sender.isNotEmpty() && sender != "02:00:00:00:00:00") sender else device.address
                                 if (keysData.isNotEmpty()) {
                                     val map = Arguments.createMap()
-                                    map.putString("senderAddress", device.address)
+                                    map.putString("senderAddress", senderNode)
                                     map.putString("keys", keysData)
                                     sendEvent("onHandshakeKeysReceived", map)
                                 }
@@ -138,15 +139,16 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                 if (myKeys.isNotEmpty()) {
                                     val keyRespJson = JSONObject().apply {
                                         put("type", "KEY_RESP")
-                                        put("sender", device.address)
+                                        put("sender", bluetoothAdapter?.address ?: "02:00:00:00:00:00")
                                         put("keys", myKeys)
                                     }.toString()
                                     sendMessageToDeviceInternal(device.address, keyRespJson, null)
                                 }
                             } else if (type == "KEY_RESP") {
                                 Log.i("BLEMeshModule", "Received KEY_RESP from $sender")
+                                val senderNode = if (sender.isNotEmpty() && sender != "02:00:00:00:00:00") sender else device.address
                                 val map = Arguments.createMap()
-                                map.putString("senderAddress", device.address)
+                                map.putString("senderAddress", senderNode)
                                 map.putString("keys", keysData)
                                 sendEvent("onHandshakeKeysReceived", map)
                             } else {
