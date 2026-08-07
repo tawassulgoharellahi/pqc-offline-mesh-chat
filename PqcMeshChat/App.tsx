@@ -74,7 +74,18 @@ function App(): React.JSX.Element {
     }
   };
 
+  // Auto-start BLE Mesh Server & Advertising on startup
   useEffect(() => {
+    const initBle = async () => {
+      try {
+        await BLEMeshModule.startAdvertising();
+        setMeshActive(true);
+      } catch (err) {
+        console.warn("BLE auto-start notice:", err);
+      }
+    };
+    initBle();
+
     const recvSub = bleEmitter.addListener('onMessageReceived', async (event) => {
       const { senderAddress, payload } = event;
       
@@ -122,16 +133,6 @@ function App(): React.JSX.Element {
       setQrPayload(JSON.stringify({ keys: base64Keys, mac }));
     } catch (e: any) {
       Alert.alert("Key Gen Error", e.message);
-    }
-  };
-
-  const startAdvertising = async () => {
-    try {
-      await BLEMeshModule.startAdvertising();
-      setMeshActive(true);
-      Alert.alert("Success", "BLE Mesh Node Started!");
-    } catch (e: any) {
-      Alert.alert("Error", e.message);
     }
   };
 
@@ -243,16 +244,17 @@ function App(): React.JSX.Element {
           {handshakeDone && <Text style={styles.successText}>✓ Session Secured</Text>}
         </View>
 
-        {/* Step 3: Mesh Network */}
+        {/* Step 3: Mesh Status */}
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>3. Start Mesh Network</Text>
-          <Button title="Start BLE GATT Server & Advertising" onPress={startAdvertising} color="#10B981" />
-          {meshActive && (
-            <View style={[styles.statusBox, { marginTop: 12, backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
-              <Text style={[styles.statusText, { color: '#1E40AF' }]}>📡 Gossip Relay Node: Active</Text>
-              <Text style={[styles.statusText, { color: '#1E40AF' }]}>📦 Packets Relayed via Mesh: {relayedCount}</Text>
-            </View>
-          )}
+          <Text style={styles.sectionTitle}>3. Mesh Network Status</Text>
+          <View style={[styles.statusBox, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE', marginBottom: 0 }]}>
+            <Text style={[styles.statusText, { color: '#1E40AF' }]}>
+              {meshActive ? "📡 BLE GATT Server & Advertising: Active (Auto-Started)" : "📡 Initializing BLE Mesh Node..."}
+            </Text>
+            <Text style={[styles.statusText, { color: '#1E40AF', marginTop: 4 }]}>
+              📦 Packets Relayed via Mesh: {relayedCount}
+            </Text>
+          </View>
         </View>
 
         {/* Chat Interface */}
