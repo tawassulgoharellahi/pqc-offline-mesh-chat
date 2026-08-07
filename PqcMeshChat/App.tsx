@@ -11,7 +11,9 @@ import {
   NativeEventEmitter,
   TextInput,
   Alert,
-  TouchableOpacity
+  TouchableOpacity,
+  PermissionsAndroid,
+  Platform
 } from 'react-native';
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import QRCode from 'react-native-qrcode-svg';
@@ -58,7 +60,27 @@ function App(): React.JSX.Element {
     }
   };
 
-  const startScanning = () => {
+  const startScanning = async () => {
+    if (Platform.OS === 'android') {
+      try {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.CAMERA,
+          {
+            title: 'Camera Permission',
+            message: 'App needs camera access to scan QR codes for secure PQC key exchange.',
+            buttonNeutral: 'Ask Later',
+            buttonNegative: 'Cancel',
+            buttonPositive: 'OK',
+          }
+        );
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+          Alert.alert("Permission Denied", "Camera permission is required to scan QR codes.");
+          return;
+        }
+      } catch (err) {
+        console.warn("Camera permission request error:", err);
+      }
+    }
     setIsScanning(true);
   };
 
@@ -125,7 +147,6 @@ function App(): React.JSX.Element {
       }
       setMyKeys(base64Keys);
       setMyMac(mac);
-      // Small 25-character payload for instant 100% reliable QR code scanning!
       setQrPayload(JSON.stringify({ m: mac }));
     } catch (e: any) {
       Alert.alert("Key Gen Error", e.message);
@@ -165,6 +186,7 @@ function App(): React.JSX.Element {
         <Camera
           style={StyleSheet.absoluteFill}
           scanBarcode={true}
+          allowedBarcodeTypes={['qr']}
           onReadCode={async (event: any) => {
             const scannedValue = event.nativeEvent.codeStringValue;
             if (scannedValue) {
@@ -181,11 +203,11 @@ function App(): React.JSX.Element {
               if (extractedMac) {
                 setTargetDevice(extractedMac);
                 setIsScanning(false);
-                Alert.alert("QR Code Scanned!", `Discovered target device (${extractedMac}). Exchanging PQC keys over BLE...`);
+                Alert.alert("QR Code Scanned!", `Target device (${extractedMac}) found. Exchanging PQC keys...`);
                 try {
                   await BLEMeshModule.requestPqcKeysOverBle(extractedMac);
                 } catch (err: any) {
-                  Alert.alert("BLE Key Exchange Notice", "Request sent over BLE. Initiating session...");
+                  console.warn("BLE Key Request notice:", err);
                 }
               }
             }
