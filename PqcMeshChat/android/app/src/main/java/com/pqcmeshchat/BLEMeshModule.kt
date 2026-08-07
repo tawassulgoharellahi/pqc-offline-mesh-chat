@@ -24,9 +24,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     // Hardcode 250 MTU for POC
     private val chunkingEngine = ChunkingEngine(250.toUShort())
     private val reassemblyBuffer = ReassemblyBuffer()
-    private val activeConnections = mutableMapOf<String, BluetoothDevice>()
 
-    // Store-and-Forward Mesh Queue & Deduplication Set
     private data class RelayPacket(
         val dest: String,
         val sender: String,
@@ -101,59 +99,78 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                         if (reassembled != null) {
                             val rawString = String(reassembled, Charsets.UTF_8)
                             
-                            // Try to parse packet envelope JSON
+                            var type = "MSG"
                             var dest = ""
                             var sender = device.address
                             var msgId = UUID.randomUUID().toString()
                             var ttl = 3
                             var payload = rawString
+                            var keysData = ""
 
                             try {
                                 val json = JSONObject(rawString)
+                                if (json.has("type")) type = json.getString("type")
                                 if (json.has("dest")) dest = json.getString("dest")
                                 if (json.has("sender")) sender = json.getString("sender")
                                 if (json.has("msgId")) msgId = json.getString("msgId")
                                 if (json.has("ttl")) ttl = json.getInt("ttl")
                                 if (json.has("payload")) payload = json.getString("payload")
+                                if (json.has("keys")) keysData = json.getString("keys")
                             } catch (e: Exception) {
-                                // Raw fallback string payload
+                                // Raw fallback payload
                             }
 
-                            // Deduplication: Drop if already processed
-                            if (seenMsgIds.contains(msgId)) {
-                                Log.d("BLEMeshModule", "Duplicate message $msgId dropped")
-                                if (responseNeeded) {
-                                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+                            // Handle Key Exchange Protocols over BLE
+                            if (type == "KEY_REQ") {
+                                Log.d("BLEMeshModule", "Received KEY_REQ from $sender")
+                                val myKeys = CryptoModule.identityKeys?.exportPublicKeysBase64() ?: ""
+                                if (myKeys.isNotEmpty()) {
+                                    val myMac = bluetoothAdapter?.address ?: "02:00:00:00:00:00"
+                                    val keyRespJson = JSONObject().apply {
+                                        put("type", "KEY_RESP")
+                                        put("sender", myMac)
+                                        put("keys", myKeys)
+                                    }.toString()
+                                    sendMessageToDeviceInternal(sender, keyRespJson, null)
                                 }
-                                return
-                            }
-                            seenMsgIds.add(msgId)
-
-                            val myMac = bluetoothAdapter?.address ?: "02:00:00:00:00:00"
-                            val isForMe = dest.isEmpty() || dest.equals(myMac, ignoreCase = true) || myMac == "02:00:00:00:00:00"
-
-                            if (isForMe) {
-                                // Destination reached! Emit to UI
+                            } else if (type == "KEY_RESP") {
+                                Log.d("BLEMeshModule", "Received KEY_RESP from $sender")
                                 val map = Arguments.createMap()
                                 map.putString("senderAddress", sender)
-                                map.putString("payload", payload)
-                                sendEvent("onMessageReceived", map)
-                            } else if (ttl > 1) {
-                                // Store-and-Forward Mesh Relay!
-                                val newTtl = ttl - 1
-                                val packet = RelayPacket(dest, sender, msgId, newTtl, payload)
-                                relayQueue.add(packet)
+                                map.putString("keys", keysData)
+                                sendEvent("onHandshakeKeysReceived", map)
+                            } else {
+                                // Regular encrypted message or relay
+                                if (seenMsgIds.contains(msgId)) {
+                                    Log.d("BLEMeshModule", "Duplicate message $msgId dropped")
+                                    if (responseNeeded) {
+                                        gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
+                                    }
+                                    return
+                                }
+                                seenMsgIds.add(msgId)
 
-                                val relayMap = Arguments.createMap()
-                                relayMap.putString("senderAddress", sender)
-                                relayMap.putString("destAddress", dest)
-                                relayMap.putInt("ttl", newTtl)
-                                sendEvent("onMessageRelayed", relayMap)
+                                val myMac = bluetoothAdapter?.address ?: "02:00:00:00:00:00"
+                                val isForMe = dest.isEmpty() || dest.equals(myMac, ignoreCase = true) || myMac == "02:00:00:00:00:00"
 
-                                Log.d("BLEMeshModule", "Gossip Mesh: Relaying message for $dest (TTL: $newTtl)")
-                                
-                                // Auto-attempt forward to cached peers
-                                attemptForwardQueuedMessages()
+                                if (isForMe) {
+                                    val map = Arguments.createMap()
+                                    map.putString("senderAddress", sender)
+                                    map.putString("payload", payload)
+                                    sendEvent("onMessageReceived", map)
+                                } else if (ttl > 1) {
+                                    val newTtl = ttl - 1
+                                    val packet = RelayPacket(dest, sender, msgId, newTtl, payload)
+                                    relayQueue.add(packet)
+
+                                    val relayMap = Arguments.createMap()
+                                    relayMap.putString("senderAddress", sender)
+                                    relayMap.putString("destAddress", dest)
+                                    relayMap.putInt("ttl", newTtl)
+                                    sendEvent("onMessageRelayed", relayMap)
+
+                                    attemptForwardQueuedMessages()
+                                }
                             }
                         }
                         
@@ -198,6 +215,16 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     }
 
     @ReactMethod
+    fun requestPqcKeysOverBle(deviceAddress: String, promise: Promise) {
+        val myMac = bluetoothAdapter?.address ?: "02:00:00:00:00:00"
+        val reqJson = JSONObject().apply {
+            put("type", "KEY_REQ")
+            put("sender", myMac)
+        }.toString()
+        sendMessageToDeviceInternal(deviceAddress, reqJson, promise)
+    }
+
+    @ReactMethod
     fun stopAdvertising() {
         bluetoothAdapter?.bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback)
         gattServer?.close()
@@ -210,8 +237,8 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             val packet = iterator.next()
             val device = bluetoothAdapter?.getRemoteDevice(packet.dest)
             if (device != null) {
-                // Try forwarding
                 val envelope = JSONObject().apply {
+                    put("type", "MSG")
                     put("dest", packet.dest)
                     put("sender", packet.sender)
                     put("msgId", packet.msgId)
@@ -221,34 +248,22 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
                 val chunks = chunkingEngine.splitMessage(envelope.toByteArray(), packet.ttl.toUByte())
                 if (chunks.isNotEmpty()) {
-                    iterator.remove() // Popped from queue for delivery
+                    iterator.remove()
                 }
             }
         }
     }
-    
-    @ReactMethod
-    fun sendMessageToDevice(deviceAddress: String, message: String, promise: Promise) {
+
+    private fun sendMessageToDeviceInternal(deviceAddress: String, message: String, promise: Promise?) {
         val device = bluetoothAdapter?.getRemoteDevice(deviceAddress)
         if (device == null) {
-            promise.reject("INVALID_DEVICE", "Could not find device")
+            promise?.reject("INVALID_DEVICE", "Could not find device")
             return
         }
 
-        val myMac = bluetoothAdapter?.address ?: "02:00:00:00:00:00"
-        val envelope = JSONObject().apply {
-            put("dest", deviceAddress)
-            put("sender", myMac)
-            put("msgId", UUID.randomUUID().toString())
-            put("ttl", 5)
-            put("payload", message)
-        }.toString()
-        
-        // Use Rust chunking engine to split the payload
-        val chunks = chunkingEngine.splitMessage(envelope.toByteArray(), 5.toUByte())
-        
+        val chunks = chunkingEngine.splitMessage(message.toByteArray(), 5.toUByte())
         if (chunks.isEmpty()) {
-            promise.reject("CHUNKING_FAILED", "Failed to chunk message")
+            promise?.reject("CHUNKING_FAILED", "Failed to chunk message")
             return
         }
 
@@ -302,7 +317,22 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         }
         
         device.connectGatt(reactApplicationContext, false, gattCallback)
-        promise.resolve("Message transmission started")
+        promise?.resolve("Message transmission started")
+    }
+
+    @ReactMethod
+    fun sendMessageToDevice(deviceAddress: String, message: String, promise: Promise) {
+        val myMac = bluetoothAdapter?.address ?: "02:00:00:00:00:00"
+        val envelope = JSONObject().apply {
+            put("type", "MSG")
+            put("dest", deviceAddress)
+            put("sender", myMac)
+            put("msgId", UUID.randomUUID().toString())
+            put("ttl", 5)
+            put("payload", message)
+        }.toString()
+        
+        sendMessageToDeviceInternal(deviceAddress, envelope, promise)
     }
 
     private val advertiseCallback = object : AdvertiseCallback() {

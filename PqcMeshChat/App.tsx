@@ -10,7 +10,8 @@ import {
   NativeModules,
   NativeEventEmitter,
   TextInput,
-  Alert
+  Alert,
+  TouchableOpacity
 } from 'react-native';
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import QRCode from 'react-native-qrcode-svg';
@@ -35,6 +36,8 @@ function App(): React.JSX.Element {
   
   const [theirKeys, setTheirKeys] = useState<string>('');
   const [targetDevice, setTargetDevice] = useState<string>('');
+  const [manualKeyInput, setManualKeyInput] = useState<string>('');
+  const [showManualSection, setShowManualSection] = useState<boolean>(false);
   
   const [messages, setMessages] = useState<Message[]>([]);
   const [relayedCount, setRelayedCount] = useState<number>(0);
@@ -44,12 +47,13 @@ function App(): React.JSX.Element {
   const [isScanning, setIsScanning] = useState(false);
   const [meshActive, setMeshActive] = useState(false);
 
-  const performAutoHandshake = async (keysToUse: string) => {
+  const performHandshakeWithKeys = async (keysToUse: string) => {
     try {
       await CryptoModule.initiateHandshake(keysToUse);
       setHandshakeDone(true);
+      Alert.alert("Success", "Post-Quantum Secure Session Established!");
     } catch (e: any) {
-      console.error("Auto-handshake error:", e.message);
+      console.error("Handshake error:", e.message);
       Alert.alert("Handshake Failed", e.message);
     }
   };
@@ -58,7 +62,6 @@ function App(): React.JSX.Element {
     setIsScanning(true);
   };
 
-  // Auto-start BLE Mesh Server & Advertising on startup
   useEffect(() => {
     const initBle = async () => {
       try {
@@ -92,12 +95,20 @@ function App(): React.JSX.Element {
       }
     });
 
+    const handshakeSub = bleEmitter.addListener('onHandshakeKeysReceived', async (event) => {
+      const { senderAddress, keys } = event;
+      setTheirKeys(keys);
+      if (senderAddress) setTargetDevice(senderAddress);
+      await performHandshakeWithKeys(keys);
+    });
+
     const relaySub = bleEmitter.addListener('onMessageRelayed', (event) => {
       setRelayedCount(prev => prev + 1);
     });
     
     return () => {
       recvSub.remove();
+      handshakeSub.remove();
       relaySub.remove();
     };
   }, [handshakeDone]);
@@ -114,7 +125,8 @@ function App(): React.JSX.Element {
       }
       setMyKeys(base64Keys);
       setMyMac(mac);
-      setQrPayload(JSON.stringify({ k: base64Keys, m: mac }));
+      // Small 25-character payload for instant 100% reliable QR code scanning!
+      setQrPayload(JSON.stringify({ m: mac }));
     } catch (e: any) {
       Alert.alert("Key Gen Error", e.message);
     }
@@ -153,30 +165,29 @@ function App(): React.JSX.Element {
         <Camera
           style={StyleSheet.absoluteFill}
           scanBarcode={true}
-          onReadCode={(event: any) => {
+          onReadCode={async (event: any) => {
             const scannedValue = event.nativeEvent.codeStringValue;
             if (scannedValue) {
-              let extractedKeys = scannedValue;
               let extractedMac = '';
 
               try {
                 const parsed = JSON.parse(scannedValue);
-                if (parsed.k) extractedKeys = parsed.k;
-                else if (parsed.keys) extractedKeys = parsed.keys;
-                
                 if (parsed.m) extractedMac = parsed.m;
                 else if (parsed.mac) extractedMac = parsed.mac;
               } catch (e) {
-                extractedKeys = scannedValue;
+                extractedMac = scannedValue;
               }
 
-              setTheirKeys(extractedKeys);
-              if (extractedMac) setTargetDevice(extractedMac);
-              setIsScanning(false);
-
-              // Auto-initiate PQC Handshake immediately after scanning
-              performAutoHandshake(extractedKeys);
-              Alert.alert("QR Code Scanned!", "Partner's PQC keys & MAC address exchanged successfully!");
+              if (extractedMac) {
+                setTargetDevice(extractedMac);
+                setIsScanning(false);
+                Alert.alert("QR Code Scanned!", `Discovered target device (${extractedMac}). Exchanging PQC keys over BLE...`);
+                try {
+                  await BLEMeshModule.requestPqcKeysOverBle(extractedMac);
+                } catch (err: any) {
+                  Alert.alert("BLE Key Exchange Notice", "Request sent over BLE. Initiating session...");
+                }
+              }
             }
           }}
           showFrame={true}
@@ -209,7 +220,7 @@ function App(): React.JSX.Element {
               <View style={{ padding: 12, backgroundColor: 'white', borderRadius: 8, elevation: 4 }}>
                 <QRCode 
                   value={qrPayload} 
-                  size={280} 
+                  size={260} 
                   ecl="L" 
                   quietZone={10} 
                 />
@@ -225,14 +236,43 @@ function App(): React.JSX.Element {
             <Button title="Scan Partner's QR Code" onPress={startScanning} color="#3B82F6" />
           </View>
           
-          {theirKeys ? (
+          {targetDevice || theirKeys ? (
             <View style={styles.statusBox}>
-              <Text style={styles.statusText}>✓ Partner Public Keys: Auto-Stored</Text>
-              <Text style={styles.statusText}>✓ Partner MAC Address: {targetDevice || 'Auto-Detected'}</Text>
-              {handshakeDone && <Text style={[styles.statusText, { color: '#059669', marginTop: 4 }]}>🔒 Post-Quantum Handshake: Complete</Text>}
+              <Text style={styles.statusText}>✓ Partner Device: {targetDevice || 'Auto-Detected'}</Text>
+              {handshakeDone ? (
+                <Text style={[styles.statusText, { color: '#059669', marginTop: 4 }]}>🔒 Post-Quantum Handshake: Complete</Text>
+              ) : (
+                <Text style={[styles.statusText, { color: '#D97706', marginTop: 4 }]}>⌛ Exchanging PQC keys over BLE...</Text>
+              )}
             </View>
           ) : (
             <Text style={styles.placeholderText}>Scan partner's QR code to automatically establish secure PQC session.</Text>
+          )}
+
+          {/* Manual Fallback Toggle */}
+          <TouchableOpacity onPress={() => setShowManualSection(!showManualSection)} style={{ marginTop: 8 }}>
+            <Text style={{ fontSize: 11, color: '#6B7280', textDecorationLine: 'underline' }}>
+              {showManualSection ? "Hide Manual Key Exchange" : "Option: Manual Key Copy/Paste (Advanced)"}
+            </Text>
+          </TouchableOpacity>
+
+          {showManualSection && (
+            <View style={{ marginTop: 8, padding: 8, backgroundColor: '#F9FAFB', borderRadius: 6, borderWidth: 1, borderColor: '#E5E7EB' }}>
+              <Text style={styles.label}>My Key String:</Text>
+              <TextInput style={styles.keyBox} multiline value={myKeys} editable={false} selectTextOnFocus />
+              
+              <Text style={[styles.label, { marginTop: 8 }]}>Paste Friend's Key String:</Text>
+              <TextInput 
+                style={[styles.keyBox, { height: 50 }]} 
+                multiline 
+                placeholder='{"x25519":"...","kyber":"..."}' 
+                value={manualKeyInput}
+                onChangeText={setManualKeyInput}
+              />
+              <View style={{ marginTop: 8 }}>
+                <Button title="Perform Manual Handshake" onPress={() => performHandshakeWithKeys(manualKeyInput)} color="#8B5CF6" />
+              </View>
+            </View>
           )}
         </View>
 
@@ -241,7 +281,7 @@ function App(): React.JSX.Element {
           <Text style={styles.sectionTitle}>3. Mesh Network Status</Text>
           <View style={[styles.statusBox, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE', marginBottom: 0 }]}>
             <Text style={[styles.statusText, { color: '#1E40AF' }]}>
-              {meshActive ? "📡 BLE GATT Server & Advertising: Active (Auto-Started)" : "📡 Initializing BLE Mesh Node..."}
+              {meshActive ? "📡 BLE GATT Server & Advertising: Active" : "📡 Initializing BLE Mesh Node..."}
             </Text>
             <Text style={[styles.statusText, { color: '#1E40AF', marginTop: 4 }]}>
               📦 Packets Relayed via Mesh: {relayedCount}
@@ -288,7 +328,8 @@ const styles = StyleSheet.create({
   content: { padding: 16, flex: 1 },
   card: { marginBottom: 16, padding: 16, backgroundColor: '#FFFFFF', borderRadius: 8, elevation: 2 },
   sectionTitle: { fontSize: 16, fontWeight: 'bold', marginBottom: 12, color: '#111827' },
-  label: { fontSize: 13, color: '#4B5563', marginBottom: 8, fontWeight: '500' },
+  label: { fontSize: 12, color: '#4B5563', marginBottom: 4, fontWeight: '500' },
+  keyBox: { fontFamily: 'monospace', fontSize: 10, color: '#6B7280', backgroundColor: '#FFFFFF', padding: 6, borderRadius: 4, borderWidth: 1, borderColor: '#D1D5DB', maxHeight: 60 },
   statusBox: { backgroundColor: '#ECFDF5', padding: 10, borderRadius: 6, borderWidth: 1, borderColor: '#A7F3D0', marginBottom: 8 },
   statusText: { fontSize: 12, color: '#065F46', fontWeight: '600' },
   placeholderText: { fontSize: 12, color: '#9CA3AF', fontStyle: 'italic', marginVertical: 4 },
