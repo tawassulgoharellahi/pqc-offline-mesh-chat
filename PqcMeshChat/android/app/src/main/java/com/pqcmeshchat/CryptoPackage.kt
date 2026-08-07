@@ -7,7 +7,7 @@ import com.facebook.react.uimanager.ViewManager
 
 class CryptoPackage : ReactPackage {
     override fun createNativeModules(reactContext: ReactApplicationContext): List<NativeModule> {
-        return listOf(CryptoModule(reactContext))
+        return listOf(CryptoModule(reactContext), BLEMeshModule(reactContext))
     }
 
     override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> {

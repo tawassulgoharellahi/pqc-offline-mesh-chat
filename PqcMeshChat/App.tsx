@@ -20,7 +20,7 @@ import QRCode from 'react-native-qrcode-svg';
 import { Camera } from 'react-native-camera-kit';
 
 const { CryptoModule, BLEMeshModule } = NativeModules;
-const bleEmitter = new NativeEventEmitter(BLEMeshModule);
+const bleEmitter = BLEMeshModule ? new NativeEventEmitter(BLEMeshModule) : null;
 
 interface Message {
   id: string;
@@ -106,7 +106,7 @@ function App(): React.JSX.Element {
   useEffect(() => {
     initKeysAndAdvertising();
 
-    const recvSub = bleEmitter.addListener('onMessageReceived', async (event) => {
+    const recvSub = bleEmitter?.addListener('onMessageReceived', async (event) => {
       const { senderAddress, payload } = event;
       
       try {
@@ -128,29 +128,29 @@ function App(): React.JSX.Element {
       }
     });
 
-    const handshakeSub = bleEmitter.addListener('onHandshakeKeysReceived', async (event) => {
+    const handshakeSub = bleEmitter?.addListener('onHandshakeKeysReceived', async (event) => {
       const { senderAddress, keys } = event;
       setTheirKeys(keys);
       if (senderAddress) setTargetDevice(senderAddress);
       await performHandshakeWithKeys(keys);
     });
 
-    const peerSub = bleEmitter.addListener('onPeerDiscovered', (peer: Peer) => {
+    const peerSub = bleEmitter?.addListener('onPeerDiscovered', (peer: Peer) => {
       setDiscoveredPeers(prev => {
         if (prev.some(p => p.address === peer.address)) return prev;
         return [...prev, peer];
       });
     });
 
-    const relaySub = bleEmitter.addListener('onMessageRelayed', (event) => {
+    const relaySub = bleEmitter?.addListener('onMessageRelayed', (event) => {
       setRelayedCount(prev => prev + 1);
     });
     
     return () => {
-      recvSub.remove();
-      handshakeSub.remove();
-      peerSub.remove();
-      relaySub.remove();
+      recvSub?.remove();
+      handshakeSub?.remove();
+      peerSub?.remove();
+      relaySub?.remove();
     };
   }, [handshakeDone]);
 
