@@ -374,12 +374,12 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                             if (currentChunkIndex < chunks.size) {
                                 mainHandler.postDelayed({
                                     writeNextChunk(gatt)
-                                }, 30)
+                                }, 40)
                             } else {
                                 Log.i("BLEMeshModule", "All ${chunks.size} chunks written successfully!")
                                 mainHandler.postDelayed({
                                     gatt.disconnect()
-                                }, 200)
+                                }, 1500)
                             }
                         }
                     } else {
