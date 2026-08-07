@@ -32,6 +32,19 @@ class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     }
 
     @ReactMethod
+    fun resetSession(promise: Promise) {
+        try {
+            chatSession = null
+            identityKeys = IdentityKeys.generate()
+            val newKeysJson = identityKeys?.exportPublicKeysBase64() ?: ""
+            android.util.Log.i("CryptoModule", "Session purged and new identity keys generated successfully")
+            promise.resolve(newKeysJson)
+        } catch (e: Exception) {
+            promise.reject("RESET_FAILED", e)
+        }
+    }
+
+    @ReactMethod
     fun exportPublicKeysBase64(promise: Promise) {
         try {
             val keys = identityKeys

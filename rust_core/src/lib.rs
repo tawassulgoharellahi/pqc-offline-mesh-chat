@@ -161,7 +161,7 @@ impl ChatSession {
     }
     
     pub fn encrypt_message(&self, plaintext: String) -> Result<Vec<u8>, CryptoError> {
-        let mut key_guard = self.current_key.lock().unwrap();
+        let key_guard = self.current_key.lock().unwrap();
         let cipher = Aes256Gcm::new(aes_gcm::Key::<Aes256Gcm>::from_slice(&*key_guard));
         
         let mut nonce_bytes = [0u8; 12];
@@ -171,12 +171,6 @@ impl ChatSession {
         let ciphertext = cipher.encrypt(nonce, plaintext.as_bytes())
             .map_err(|_| CryptoError::EncryptionFailed)?;
             
-        // Ratchet the key
-        let hkdf = Hkdf::<Sha256>::new(None, &*key_guard);
-        let mut next_key = [0u8; 32];
-        hkdf.expand(b"ratchet", &mut next_key).unwrap();
-        *key_guard = next_key;
-        
         // Output format: Nonce (12) || Ciphertext
         let mut output = nonce_bytes.to_vec();
         output.extend(ciphertext);
@@ -188,7 +182,7 @@ impl ChatSession {
             return Err(CryptoError::DecryptionFailed);
         }
         
-        let mut key_guard = self.current_key.lock().unwrap();
+        let key_guard = self.current_key.lock().unwrap();
         let cipher = Aes256Gcm::new(aes_gcm::Key::<Aes256Gcm>::from_slice(&*key_guard));
         
         let nonce = Nonce::from_slice(&encrypted_data[0..12]);
@@ -197,12 +191,6 @@ impl ChatSession {
         let plaintext = cipher.decrypt(nonce, ciphertext)
             .map_err(|_| CryptoError::DecryptionFailed)?;
             
-        // Ratchet the key
-        let hkdf = Hkdf::<Sha256>::new(None, &*key_guard);
-        let mut next_key = [0u8; 32];
-        hkdf.expand(b"ratchet", &mut next_key).unwrap();
-        *key_guard = next_key;
-        
         String::from_utf8(plaintext).map_err(|_| CryptoError::DecryptionFailed)
     }
 }

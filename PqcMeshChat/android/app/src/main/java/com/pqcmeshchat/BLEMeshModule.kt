@@ -1,12 +1,22 @@
 package com.pqcmeshchat
 
+import android.app.ActivityManager
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.bluetooth.*
 import android.bluetooth.le.*
 import android.content.Context
+import android.content.Intent
+import android.media.AudioAttributes
+import android.media.RingtoneManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.ParcelUuid
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import org.json.JSONObject
@@ -18,6 +28,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     private val SERVICE_UUID = UUID.fromString("0000FF01-0000-1000-8000-00805F9B34FB")
     private val CHAR_UUID = UUID.fromString("0000FF02-0000-1000-8000-00805F9B34FB")
     private val parcelUuid = ParcelUuid(SERVICE_UUID)
+    private val CHANNEL_ID = "pqc_messages_channel"
 
     private val bluetoothManager: BluetoothManager = reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
@@ -39,6 +50,104 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     private val seenMsgIds = mutableSetOf<String>()
     private val relayQueue = mutableListOf<RelayPacket>()
     private val discoveredPeers = mutableMapOf<String, String>()
+
+    init {
+        createNotificationChannel()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "PQC Messages",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Offline PQC Encrypted Messages"
+                enableVibration(true)
+                setSound(
+                    RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+            }
+            val notificationManager = reactApplicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun isAppInForeground(): Boolean {
+        try {
+            val activityManager = reactApplicationContext.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return false
+            val appProcesses = activityManager.runningAppProcesses ?: return false
+            val packageName = reactApplicationContext.packageName
+            for (appProcess in appProcesses) {
+                if (appProcess.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND && appProcess.processName == packageName) {
+                    return true
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("BLEMeshModule", "Foreground check error: ${e.message}")
+        }
+        return false
+    }
+
+    private fun playInAppChimeSound() {
+        try {
+            val uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            val ringtone = RingtoneManager.getRingtone(reactApplicationContext, uri)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                ringtone.volume = 0.35f // Dim / lower volume for open app in foreground
+            }
+            ringtone.play()
+        } catch (e: Exception) {
+            Log.w("BLEMeshModule", "Chime play error: ${e.message}")
+        }
+    }
+
+    private fun showSystemNotification(sender: String) {
+        val intent = Intent(reactApplicationContext, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            reactApplicationContext,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val builder = NotificationCompat.Builder(reactApplicationContext, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("New PQC Message")
+            .setContentText("Message received from peer (${sender.takeLast(8)})")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION))
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+
+        val notificationManager = NotificationManagerCompat.from(reactApplicationContext)
+        try {
+            notificationManager.notify((System.currentTimeMillis() % 10000).toInt(), builder.build())
+        } catch (e: SecurityException) {
+            Log.w("BLEMeshModule", "Notification permission missing: ${e.message}")
+        } catch (e: Exception) {
+            Log.w("BLEMeshModule", "Notification post error: ${e.message}")
+        }
+    }
+
+    private fun triggerMessageAudioNotification(sender: String) {
+        mainHandler.post {
+            if (isAppInForeground()) {
+                Log.i("BLEMeshModule", "App in foreground: Playing soft chime tone")
+                playInAppChimeSound()
+            } else {
+                Log.i("BLEMeshModule", "App in background: Showing system status bar notification with ringtone")
+                showSystemNotification(sender)
+            }
+        }
+    }
 
     override fun getName(): String {
         return "BLEMeshModule"
@@ -179,6 +288,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                     map.putString("senderAddress", senderNode)
                                     map.putString("payload", payload)
                                     sendEvent("onMessageReceived", map)
+                                    triggerMessageAudioNotification(senderNode)
                                 } else if (ttl > 1) {
                                     val newTtl = ttl - 1
                                     val packet = RelayPacket(dest, senderNode, msgId, newTtl, payload)
@@ -407,15 +517,19 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                 val scanCb = object : ScanCallback() {
                                     override fun onScanResult(callbackType: Int, result: ScanResult) {
                                         val addr = result.device.address
-                                        if (isValidTargetMac(addr)) {
-                                            freshMac = addr
-                                            latch.countDown()
-                                        }
+                                        freshMac = addr
+                                        latch.countDown()
                                     }
                                 }
                                 try {
-                                    scanner.startScan(scanCb)
-                                    latch.await(800, java.util.concurrent.TimeUnit.MILLISECONDS)
+                                    val filter = ScanFilter.Builder()
+                                        .setServiceUuid(parcelUuid)
+                                        .build()
+                                    val settings = ScanSettings.Builder()
+                                        .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                                        .build()
+                                    scanner.startScan(listOf(filter), settings, scanCb)
+                                    latch.await(1200, java.util.concurrent.TimeUnit.MILLISECONDS)
                                     scanner.stopScan(scanCb)
                                 } catch (e: Exception) {
                                     Log.w("BLEMeshModule", "Retry scan exception: ${e.message}")
@@ -423,8 +537,10 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                             }
                             val finalMac = freshMac ?: targetMac
                             Log.i("BLEMeshModule", "Retrying GATT connection (attempt $retryCount) to $finalMac...")
-                            val retryDevice = bluetoothAdapter?.getRemoteDevice(finalMac)
-                            retryDevice?.connectGatt(reactApplicationContext, false, this, BluetoothDevice.TRANSPORT_LE)
+                            mainHandler.postDelayed({
+                                val retryDevice = bluetoothAdapter?.getRemoteDevice(finalMac)
+                                retryDevice?.connectGatt(reactApplicationContext, false, this, BluetoothDevice.TRANSPORT_LE)
+                            }, 500)
                         }, 300)
                     } else {
                         promise?.reject("GATT_CONNECT_FAILED", "GATT connection failed with status $status")
@@ -549,6 +665,19 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         override fun onScanFailed(errorCode: Int) {
             super.onScanFailed(errorCode)
             Log.e("BLEMeshModule", "BLE Scan Failed: $errorCode")
+        }
+    }
+
+    @ReactMethod
+    fun resetMeshState(promise: Promise) {
+        try {
+            seenMsgIds.clear()
+            relayQueue.clear()
+            discoveredPeers.clear()
+            Log.i("BLEMeshModule", "BLE Mesh cache and discovered peers cleared")
+            promise.resolve("Mesh state reset successfully")
+        } catch (e: Exception) {
+            promise.reject("RESET_FAILED", e)
         }
     }
 

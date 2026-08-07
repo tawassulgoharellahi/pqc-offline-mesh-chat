@@ -60,6 +60,18 @@ const SendIcon = ({ size = 20, color = "#FFFFFF" }: { size?: number; color?: str
   </Svg>
 );
 
+const RefreshIcon = ({ size = 20, color = "#FFFFFF" }: { size?: number; color?: string }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <Path 
+      d="M 17.65 6.35 A 8 8 0 1 0 19.73 13 M 17.65 6.35 V 2 M 17.65 6.35 H 22" 
+      stroke={color} 
+      strokeWidth="2.2" 
+      strokeLinecap="round" 
+      strokeLinejoin="round"
+    />
+  </Svg>
+);
+
 interface Message {
   id: string;
   sender: string;
@@ -238,6 +250,34 @@ export default function App() {
     }
   };
 
+  const purgeSessionAndResetKeys = async () => {
+    Alert.alert(
+      "Purge Session & Reset Keys 🧹",
+      "Are you sure you want to purge all active session cache and generate new PQC identity keys? You will need to scan your partner's QR code again.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Purge & Reset",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const newKeysJson = await CryptoModule.resetSession();
+              await BLEMeshModule.resetMeshState();
+              setMyKeys(newKeysJson);
+              setQrPayload(JSON.stringify({ m: myMac, k: newKeysJson }));
+              setMessages([]);
+              setTargetDevice('');
+              updateHandshakeState(false);
+              Alert.alert("Session Purged 🧹", "New PQC keys generated! Scan your partner's QR code to start a fresh secure session.");
+            } catch (err: any) {
+              Alert.alert("Purge Error", err.message);
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const connectToPeer = async (peerAddress: string) => {
     try {
       setTargetDevice(peerAddress);
@@ -321,6 +361,15 @@ export default function App() {
               hitSlop={8}
             >
               <CameraIcon size={20} color="#FFFFFF" />
+            </Pressable>
+
+            <Pressable 
+              style={({ pressed }) => [styles.topIconCircleAction, pressed && styles.topIconCircleActionPressed]} 
+              onPress={purgeSessionAndResetKeys}
+              android_ripple={{ color: 'rgba(255, 255, 255, 0.25)', borderless: true, radius: 20 }}
+              hitSlop={8}
+            >
+              <RefreshIcon size={20} color="#FFFFFF" />
             </Pressable>
           </View>
         </View>
