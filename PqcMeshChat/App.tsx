@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, SafeAreaProvider } from 'react-native-safe-area-context';
 import QRCode from 'react-native-qrcode-svg';
-import { Camera, useCameraDevice, useCodeScanner } from 'react-native-vision-camera';
+import { Camera } from 'react-native-camera-kit';
 
 const { CryptoModule, BLEMeshModule } = NativeModules;
 const bleEmitter = new NativeEventEmitter(BLEMeshModule);
@@ -43,8 +43,6 @@ function App(): React.JSX.Element {
   const [handshakeDone, setHandshakeDone] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [meshActive, setMeshActive] = useState(false);
-  
-  const device = useCameraDevice('back');
 
   const performAutoHandshake = async (keysToUse: string) => {
     try {
@@ -56,43 +54,8 @@ function App(): React.JSX.Element {
     }
   };
 
-  const codeScanner = useCodeScanner({
-    codeTypes: ['qr'],
-    onCodeScanned: (codes) => {
-      if (codes.length > 0 && codes[0].value) {
-        const scannedValue = codes[0].value;
-        let extractedKeys = scannedValue;
-        let extractedMac = '';
-
-        try {
-          const parsed = JSON.parse(scannedValue);
-          if (parsed.k) extractedKeys = parsed.k;
-          else if (parsed.keys) extractedKeys = parsed.keys;
-          
-          if (parsed.m) extractedMac = parsed.m;
-          else if (parsed.mac) extractedMac = parsed.mac;
-        } catch (e) {
-          extractedKeys = scannedValue;
-        }
-
-        setTheirKeys(extractedKeys);
-        if (extractedMac) setTargetDevice(extractedMac);
-        setIsScanning(false);
-
-        // Auto-initiate PQC Handshake immediately after scanning
-        performAutoHandshake(extractedKeys);
-        Alert.alert("QR Code Detected!", "Keys & MAC exchanged. Post-Quantum Session Secured!");
-      }
-    }
-  });
-
-  const startScanning = async () => {
-    const permission = await Camera.requestCameraPermission();
-    if (permission === 'granted') {
-      setIsScanning(true);
-    } else {
-      Alert.alert("Permission Denied", "Camera permission is required to scan QR codes.");
-    }
+  const startScanning = () => {
+    setIsScanning(true);
   };
 
   // Auto-start BLE Mesh Server & Advertising on startup
@@ -151,7 +114,6 @@ function App(): React.JSX.Element {
       }
       setMyKeys(base64Keys);
       setMyMac(mac);
-      // Compact JSON structure + low error correction for maximum QR scanning speed
       setQrPayload(JSON.stringify({ k: base64Keys, m: mac }));
     } catch (e: any) {
       Alert.alert("Key Gen Error", e.message);
@@ -186,25 +148,42 @@ function App(): React.JSX.Element {
   };
 
   if (isScanning) {
-    if (device == null) return (
-      <SafeAreaView style={styles.container}>
-        <Text style={{ textAlign: 'center', marginTop: 40 }}>No Camera Device Found</Text>
-        <Button title="Back" onPress={() => setIsScanning(false)} />
-      </SafeAreaView>
-    );
     return (
       <View style={StyleSheet.absoluteFill}>
         <Camera
           style={StyleSheet.absoluteFill}
-          device={device}
-          isActive={true}
-          codeScanner={codeScanner}
-          enableZoomGesture={true}
+          scanBarcode={true}
+          onReadCode={(event: any) => {
+            const scannedValue = event.nativeEvent.codeStringValue;
+            if (scannedValue) {
+              let extractedKeys = scannedValue;
+              let extractedMac = '';
+
+              try {
+                const parsed = JSON.parse(scannedValue);
+                if (parsed.k) extractedKeys = parsed.k;
+                else if (parsed.keys) extractedKeys = parsed.keys;
+                
+                if (parsed.m) extractedMac = parsed.m;
+                else if (parsed.mac) extractedMac = parsed.mac;
+              } catch (e) {
+                extractedKeys = scannedValue;
+              }
+
+              setTheirKeys(extractedKeys);
+              if (extractedMac) setTargetDevice(extractedMac);
+              setIsScanning(false);
+
+              // Auto-initiate PQC Handshake immediately after scanning
+              performAutoHandshake(extractedKeys);
+              Alert.alert("QR Code Scanned!", "Partner's PQC keys & MAC address exchanged successfully!");
+            }
+          }}
+          showFrame={true}
+          laserColor="#3B82F6"
+          frameColor="#FFFFFF"
         />
-        {/* Scanning Viewfinder Frame */}
-        <View style={styles.scannerOverlay}>
-          <View style={styles.scanTargetBox} />
-          <Text style={styles.scanInstruction}>Center the QR Code inside the box</Text>
+        <View style={styles.cancelScanArea}>
           <Button title="Cancel Scan" onPress={() => setIsScanning(false)} color="#EF4444" />
         </View>
       </View>
@@ -322,9 +301,7 @@ const styles = StyleSheet.create({
   inputArea: { padding: 16, backgroundColor: '#FFFFFF', borderTopWidth: 1, borderColor: '#E5E7EB' },
   row: { flexDirection: 'row', alignItems: 'center' },
   input: { borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 6, padding: 10, backgroundColor: '#F9FAFB' },
-  scannerOverlay: { position: 'absolute', bottom: 40, left: 0, right: 0, alignItems: 'center' },
-  scanTargetBox: { width: 260, height: 260, borderWidth: 3, borderColor: '#3B82F6', borderRadius: 12, marginBottom: 16, backgroundColor: 'rgba(255,255,255,0.05)' },
-  scanInstruction: { color: '#FFFFFF', fontSize: 14, fontWeight: '600', marginBottom: 16, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6 }
+  cancelScanArea: { position: 'absolute', bottom: 40, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.5)', padding: 8, borderRadius: 8 }
 });
 
 export default function AppWrapper() {
