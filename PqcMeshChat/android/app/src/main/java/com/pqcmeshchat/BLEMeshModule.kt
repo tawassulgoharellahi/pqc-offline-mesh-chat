@@ -20,8 +20,8 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     private val bluetoothManager: BluetoothManager = reactContext.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     private val bluetoothAdapter: BluetoothAdapter? = bluetoothManager.adapter
     private var gattServer: BluetoothGattServer? = null
+    private var bleScanner: BluetoothLeScanner? = null
     
-    // Hardcode 250 MTU for POC
     private val chunkingEngine = ChunkingEngine(250.toUShort())
     private val reassemblyBuffer = ReassemblyBuffer()
 
@@ -35,39 +35,37 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     
     private val seenMsgIds = mutableSetOf<String>()
     private val relayQueue = mutableListOf<RelayPacket>()
+    private val discoveredPeers = mutableMapOf<String, String>() // Address -> Name/NodeId
 
     override fun getName(): String {
         return "BLEMeshModule"
-    }
-
-    @ReactMethod
-    fun getMacAddress(promise: Promise) {
-        try {
-            var mac = bluetoothAdapter?.address
-            if (mac == null || mac == "02:00:00:00:00:00") {
-                val secureMac = android.provider.Settings.Secure.getString(
-                    reactApplicationContext.contentResolver,
-                    "bluetooth_address"
-                )
-                if (!secureMac.isNullOrEmpty()) {
-                    mac = secureMac
-                }
-            }
-            promise.resolve(mac ?: "02:00:00:00:00:00")
-        } catch (e: Exception) {
-            promise.resolve("02:00:00:00:00:00")
-        }
-    }
-
-    @ReactMethod
-    fun getRelayedCount(promise: Promise) {
-        promise.resolve(relayQueue.size)
     }
 
     private fun sendEvent(eventName: String, params: WritableMap?) {
         reactApplicationContext
             .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
             .emit(eventName, params)
+    }
+
+    @ReactMethod
+    fun getMacAddress(promise: Promise) {
+        try {
+            val mac = bluetoothAdapter?.address
+            if (mac != null && mac != "02:00:00:00:00:00") {
+                promise.resolve(mac)
+            } else {
+                // Fallback to random persistent Node ID format if system MAC is hidden
+                val nodeId = "NODE_" + (android.os.Build.MODEL.replace(" ", "") + "_" + android.os.Build.BOARD).take(12)
+                promise.resolve(nodeId)
+            }
+        } catch (e: Exception) {
+            promise.resolve("NODE_DEVICE")
+        }
+    }
+
+    @ReactMethod
+    fun getRelayedCount(promise: Promise) {
+        promise.resolve(relayQueue.size)
     }
 
     @ReactMethod
@@ -117,32 +115,28 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                 if (json.has("payload")) payload = json.getString("payload")
                                 if (json.has("keys")) keysData = json.getString("keys")
                             } catch (e: Exception) {
-                                // Raw fallback payload
+                                // Raw payload fallback
                             }
 
-                            // Handle Key Exchange Protocols over BLE
                             if (type == "KEY_REQ") {
                                 Log.d("BLEMeshModule", "Received KEY_REQ from $sender")
                                 val myKeys = CryptoModule.identityKeys?.exportPublicKeysBase64() ?: ""
                                 if (myKeys.isNotEmpty()) {
-                                    val myMac = bluetoothAdapter?.address ?: "02:00:00:00:00:00"
                                     val keyRespJson = JSONObject().apply {
                                         put("type", "KEY_RESP")
-                                        put("sender", myMac)
+                                        put("sender", device.address)
                                         put("keys", myKeys)
                                     }.toString()
-                                    sendMessageToDeviceInternal(sender, keyRespJson, null)
+                                    sendMessageToDeviceInternal(device.address, keyRespJson, null)
                                 }
                             } else if (type == "KEY_RESP") {
                                 Log.d("BLEMeshModule", "Received KEY_RESP from $sender")
                                 val map = Arguments.createMap()
-                                map.putString("senderAddress", sender)
+                                map.putString("senderAddress", device.address)
                                 map.putString("keys", keysData)
                                 sendEvent("onHandshakeKeysReceived", map)
                             } else {
-                                // Regular encrypted message or relay
                                 if (seenMsgIds.contains(msgId)) {
-                                    Log.d("BLEMeshModule", "Duplicate message $msgId dropped")
                                     if (responseNeeded) {
                                         gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, null)
                                     }
@@ -150,8 +144,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                 }
                                 seenMsgIds.add(msgId)
 
-                                val myMac = bluetoothAdapter?.address ?: "02:00:00:00:00:00"
-                                val isForMe = dest.isEmpty() || dest.equals(myMac, ignoreCase = true) || myMac == "02:00:00:00:00:00"
+                                val isForMe = dest.isEmpty() || dest.equals(device.address, ignoreCase = true)
 
                                 if (isForMe) {
                                     val map = Arguments.createMap()
@@ -200,13 +193,13 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
         // 2. Start Advertising
         val settings = AdvertiseSettings.Builder()
-            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_BALANCED)
-            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_MEDIUM)
+            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
+            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
             .setConnectable(true)
             .build()
 
         val data = AdvertiseData.Builder()
-            .setIncludeDeviceName(false)
+            .setIncludeDeviceName(true)
             .addServiceUuid(parcelUuid)
             .build()
 
@@ -215,11 +208,36 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     }
 
     @ReactMethod
+    fun startPeerDiscovery(promise: Promise) {
+        bleScanner = bluetoothAdapter?.bluetoothLeScanner
+        if (bleScanner == null) {
+            promise.reject("SCANNER_UNAVAILABLE", "Bluetooth LE Scanner unavailable")
+            return
+        }
+
+        val scanFilter = ScanFilter.Builder()
+            .setServiceUuid(parcelUuid)
+            .build()
+
+        val scanSettings = ScanSettings.Builder()
+            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .build()
+
+        discoveredPeers.clear()
+        bleScanner?.startScan(listOf(scanFilter), scanSettings, scanCallback)
+        promise.resolve("Peer Discovery Started")
+    }
+
+    @ReactMethod
+    fun stopPeerDiscovery() {
+        bleScanner?.stopScan(scanCallback)
+    }
+
+    @ReactMethod
     fun requestPqcKeysOverBle(deviceAddress: String, promise: Promise) {
-        val myMac = bluetoothAdapter?.address ?: "02:00:00:00:00:00"
         val reqJson = JSONObject().apply {
             put("type", "KEY_REQ")
-            put("sender", myMac)
+            put("sender", bluetoothAdapter?.address ?: "02:00:00:00:00:00")
         }.toString()
         sendMessageToDeviceInternal(deviceAddress, reqJson, promise)
     }
@@ -257,7 +275,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     private fun sendMessageToDeviceInternal(deviceAddress: String, message: String, promise: Promise?) {
         val device = bluetoothAdapter?.getRemoteDevice(deviceAddress)
         if (device == null) {
-            promise?.reject("INVALID_DEVICE", "Could not find device")
+            promise?.reject("INVALID_DEVICE", "Could not find device $deviceAddress")
             return
         }
 
@@ -322,17 +340,39 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
     @ReactMethod
     fun sendMessageToDevice(deviceAddress: String, message: String, promise: Promise) {
-        val myMac = bluetoothAdapter?.address ?: "02:00:00:00:00:00"
         val envelope = JSONObject().apply {
             put("type", "MSG")
             put("dest", deviceAddress)
-            put("sender", myMac)
+            put("sender", bluetoothAdapter?.address ?: "02:00:00:00:00:00")
             put("msgId", UUID.randomUUID().toString())
             put("ttl", 5)
             put("payload", message)
         }.toString()
         
         sendMessageToDeviceInternal(deviceAddress, envelope, promise)
+    }
+
+    private val scanCallback = object : ScanCallback() {
+        override fun onScanResult(callbackType: Int, result: ScanResult) {
+            super.onScanResult(callbackType, result)
+            val device = result.device
+            val address = device.address
+            val name = device.name ?: "PQC Node (${address.takeLast(5)})"
+
+            if (!discoveredPeers.containsKey(address)) {
+                discoveredPeers[address] = name
+                val map = Arguments.createMap()
+                map.putString("address", address)
+                map.putString("name", name)
+                map.putInt("rssi", result.rssi)
+                sendEvent("onPeerDiscovered", map)
+            }
+        }
+
+        override fun onScanFailed(errorCode: Int) {
+            super.onScanFailed(errorCode)
+            Log.e("BLEMeshModule", "BLE Scan Failed: $errorCode")
+        }
     }
 
     private val advertiseCallback = object : AdvertiseCallback() {
