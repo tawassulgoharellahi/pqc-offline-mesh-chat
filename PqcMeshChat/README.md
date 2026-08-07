@@ -8,10 +8,11 @@ An offline, decentralized, post-quantum encrypted Android mobile messaging appli
 
 * 🔐 **Hybrid Post-Quantum Cryptography (PQC)**: Combines classical **X25519** ECDH with NIST-standardized **Kyber-768 / ML-KEM** via compiled Rust core native bindings (`uniffi` / `JNA`).
 * 📡 **Offline BLE Mesh Networking**: Fully offline peer-to-peer messaging using Android Bluetooth Low Energy GATT Server & Advertising capabilities with custom MTU chunking and packet reassembly.
+* 📦 **Store-and-Forward Outbox Queue**: Messages sent while a peer is disconnected or out-of-range are automatically queued (`⌛ Outbox`) and flushed as soon as the BLE connection is re-established.
+* 🔄 **GATT Lifecycle & Dynamic MAC Recovery**: Gracefully handles Android Bluetooth toggles (ON/OFF) by auto-recreating destroyed GATT servers and resolving dynamic Random Private Address (RPA) rotations with non-blocking scans.
 * 📷 **Single QR Code Out-of-Band Pairing**: Scan your peer's QR code **once** to exchange PQC public key bundles and MAC addresses out-of-band over BLE (`KEY_REQ` / `KEY_RESP`)—zero manual configuration required.
 * 🔒 **Authenticated End-to-End Encryption**: All messages are encrypted locally using **AES-256-GCM** derived from the post-quantum shared secret before being chunked and transmitted over BLE.
-* 💬 **Modern WhatsApp-Inspired UI**: Responsive dark theme featuring WhatsApp chat bubbles, single/double delivery indicators, node status badges, and embedded full-screen camera QR scanner.
-* 🔄 **Dynamic BLE MAC Rotation Handling**: Automatically handles Android randomized private advertising MAC address rotations with active scan retries and GATT status 147 congestion prevention.
+* 💬 **Modern WhatsApp-Inspired UI**: Responsive dark theme with 0ms instant sending UI feedback, delivery status indicators (`⌛ Outbox` ➔ `✓ 🔒`), node status badges, and embedded full-screen camera QR scanner.
 
 ---
 
