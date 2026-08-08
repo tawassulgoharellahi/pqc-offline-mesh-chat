@@ -20,5 +20,4 @@ uniffi = { version = "0.27", features = ["cli"] }
 base64 = "0.23.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
-
-
+lz4_flex = "0.11.3"

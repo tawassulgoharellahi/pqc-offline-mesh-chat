@@ -25,3 +25,17 @@ local.properties
 
 # Metro
 .metro-health-check*
+
+# Local JDK & Tools
+jdk21*
+*.tar.gz
+*.log
+*.txt
+.idea/
+rust_core/uniffi/
+
+# APKs
+
+*.apk
+**/build/outputs/apk/
+

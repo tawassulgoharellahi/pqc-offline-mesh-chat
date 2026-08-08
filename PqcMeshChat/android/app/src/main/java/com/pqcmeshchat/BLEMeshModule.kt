@@ -471,7 +471,28 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     }
 
     @ReactMethod
+    fun startForegroundService(promise: Promise) {
+        try {
+            BLEMeshService.start(reactApplicationContext)
+            promise.resolve("FOREGROUND_SERVICE_STARTED")
+        } catch (e: Exception) {
+            promise.reject("FG_SERVICE_ERROR", e.message)
+        }
+    }
+
+    @ReactMethod
+    fun stopForegroundService(promise: Promise) {
+        try {
+            BLEMeshService.stop(reactApplicationContext)
+            promise.resolve("FOREGROUND_SERVICE_STOPPED")
+        } catch (e: Exception) {
+            promise.reject("FG_SERVICE_ERROR", e.message)
+        }
+    }
+
+    @ReactMethod
     fun stopAdvertising() {
+
         bluetoothAdapter?.bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback)
         gattServer?.close()
     }
@@ -489,10 +510,17 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
     @Volatile
     private var isFlushingOutbox = false
+    @Volatile
+    private var lastForwardAttemptTime = 0L
 
     private fun attemptForwardQueuedMessages() {
-        if (storeAndForwardOutbox.isEmpty()) return
+        if (storeAndForwardOutbox.isEmpty() && relayQueue.isEmpty()) return
         if (isFlushingOutbox) return
+
+        // Debounce: at most once per 2 seconds
+        val now = System.currentTimeMillis()
+        if (now - lastForwardAttemptTime < 2000L) return
+        lastForwardAttemptTime = now
 
         isFlushingOutbox = true
         Thread {
@@ -530,20 +558,20 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 }
 
                 // 2. Process Store-and-Forward Outbox
-                val now = System.currentTimeMillis()
+                val outboxNow = System.currentTimeMillis()
                 val outboxList = synchronized(storeAndForwardOutbox) {
-                    storeAndForwardOutbox.removeAll { now - it.timestamp > 86400000L }
+                    storeAndForwardOutbox.removeAll { outboxNow - it.timestamp > 86400000L }
                     storeAndForwardOutbox.toList()
                 }
                 if (outboxList.isEmpty()) return@Thread
 
+                // Only attempt packets whose destination is currently online
+                val onlinePeers = discoveredPeers.keys.toSet()
                 for (packet in outboxList) {
-                    val targetMac = if (isValidTargetMac(packet.dest) && discoveredPeers.containsKey(packet.dest)) {
+                    val targetMac = if (isValidTargetMac(packet.dest) && onlinePeers.contains(packet.dest)) {
                         packet.dest
                     } else {
                         discoveredPeers.entries.firstOrNull { isPeerMatch(it.value, packet.dest) || isPeerMatch(it.key, packet.dest) }?.key
-                        ?: discoveredPeers.keys.firstOrNull { isValidTargetMac(it) }
-                        ?: if (isValidTargetMac(packet.dest)) packet.dest else null
                     }
 
                     if (targetMac != null && isValidTargetMac(targetMac)) {
@@ -795,9 +823,17 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
                     Log.i("BLEMeshModule", "onConnectionStateChange: status=$status, newState=$newState")
                     if (status != BluetoothGatt.GATT_SUCCESS) {
                         Log.e("BLEMeshModule", "GATT connection status error: $status, closing...")
+                        try {
+                            val refreshMethod = gatt.javaClass.getMethod("refresh")
+                            refreshMethod.invoke(gatt)
+                            Log.i("BLEMeshModule", "GATT cache refreshed via reflection")
+                        } catch (e: Exception) {
+                            Log.w("BLEMeshModule", "gatt.refresh() not available: ${e.message}")
+                        }
                         gatt.close()
                         if (retryCount < 2) {
                             retryCount++
+                            val retryDelay = if (status == 133) 1500L else 500L
                             mainHandler.postDelayed({
                                 val oldMac = targetMac
                                 discoveredPeers.remove(oldMac)
@@ -840,7 +876,7 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
                                     val retryDevice = bluetoothAdapter?.getRemoteDevice(targetMac)
                                     retryDevice?.connectGatt(reactApplicationContext, false, this, BluetoothDevice.TRANSPORT_LE)
                                 }
-                            }, 300)
+                            }, retryDelay)
                         } else {
                             handleGattFailure(gatt, message, deviceAddress, safePromise)
                         }
@@ -1006,15 +1042,17 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
             val address = device.address
             val name = device.name ?: "PQC Node (${address.takeLast(5)})"
 
-            if (!discoveredPeers.containsKey(address)) {
-                discoveredPeers[address] = name
+            val isNew = !discoveredPeers.containsKey(address)
+            discoveredPeers[address] = name
+            if (isNew) {
                 val map = Arguments.createMap()
                 map.putString("address", address)
                 map.putString("name", name)
                 map.putInt("rssi", result.rssi)
                 sendEvent("onPeerDiscovered", map)
+                // Only flush outbox when a genuinely new peer appears
+                attemptForwardQueuedMessages()
             }
-            attemptForwardQueuedMessages()
         }
 
         override fun onScanFailed(errorCode: Int) {

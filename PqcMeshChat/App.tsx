@@ -147,10 +147,14 @@ export default function App() {
     }
   };
 
-  const performHandshakeWithKeys = async (keysJsonString: string) => {
+  const performHandshakeWithKeys = async (keysJsonString: string, targetMacOverride?: string) => {
     try {
       if (!keysJsonString) return;
       await CryptoModule.initiateHandshake(keysJsonString);
+      const macToSave = targetMacOverride || targetDevice;
+      if (macToSave) {
+        await CryptoModule.setTargetDevice(macToSave);
+      }
       updateHandshakeState(true);
       console.log("Handshake success!");
     } catch (e: any) {
@@ -169,6 +173,18 @@ export default function App() {
       setMyMac(mac);
       setQrPayload(JSON.stringify({ m: mac, k: base64Keys }));
 
+      // Restore existing PQC chat session if present
+      try {
+        const sessionInfo = await CryptoModule.restoreSession();
+        if (sessionInfo && sessionInfo.restored && sessionInfo.targetMac) {
+          setTargetDevice(sessionInfo.targetMac);
+          updateHandshakeState(true);
+          console.log("Restored active PQC session for peer:", sessionInfo.targetMac);
+        }
+      } catch (sessErr) {
+        console.warn("Session restore check:", sessErr);
+      }
+
       await BLEMeshModule.startAdvertising();
       try {
         await BLEMeshModule.startPeerDiscovery();
@@ -176,6 +192,12 @@ export default function App() {
         console.warn("Auto scan notice:", e);
       }
       setMeshActive(true);
+      
+      try {
+        await BLEMeshModule.startForegroundService();
+      } catch (e) {
+        console.warn("Foreground service start notice:", e);
+      }
     } catch (err) {
       console.warn("Auto init notice:", err);
     }
@@ -217,8 +239,11 @@ export default function App() {
     const handshakeSub = bleEmitter?.addListener('onHandshakeKeysReceived', async (event) => {
       const { senderAddress, keys } = event;
       setTheirKeys(keys);
-      if (senderAddress) setTargetDevice(senderAddress);
-      await performHandshakeWithKeys(keys);
+      if (senderAddress) {
+        setTargetDevice(senderAddress);
+        await CryptoModule.setTargetDevice(senderAddress);
+      }
+      await performHandshakeWithKeys(keys, senderAddress);
     });
 
     const peerSub = bleEmitter?.addListener('onPeerDiscovered', (peer: Peer) => {
@@ -248,6 +273,8 @@ export default function App() {
     };
   }, []);
 
+
+
   const startDiscovery = async () => {
     try {
       setDiscoveredPeers([]);
@@ -262,11 +289,23 @@ export default function App() {
   const connectToPeer = async (peerAddress: string) => {
     try {
       setTargetDevice(peerAddress);
+      await CryptoModule.setTargetDevice(peerAddress);
       setShowPeersModal(false);
       Alert.alert("Connecting & Pairing", `Requesting PQC Key Exchange from ${peerAddress} over BLE...`);
       await BLEMeshModule.requestPqcKeysOverBle(peerAddress, myMac);
     } catch (err: any) {
       console.warn("BLE connect notice:", err);
+    }
+  };
+
+  const disconnectPeer = async () => {
+    updateHandshakeState(false);
+    setTargetDevice('');
+    try {
+      await CryptoModule.clearSession();
+      await BLEMeshModule.resetMeshState();
+    } catch (e) {
+      console.warn("Error clearing session:", e);
     }
   };
 
@@ -364,15 +403,24 @@ export default function App() {
                   {handshakeDone ? "🔒 Kyber-768 + AES-256 Encrypted Session Active" : "⌛ Exchanging PQC keys..."}
                 </Text>
               </View>
-              {!handshakeDone && (
+              <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                {!handshakeDone && (
+                  <Pressable 
+                    style={({ pressed }) => [styles.retryBtn, pressed && { opacity: 0.8 }]} 
+                    onPress={() => connectToPeer(targetDevice)}
+                    android_ripple={{ color: 'rgba(255, 255, 255, 0.3)' }}
+                  >
+                    <Text style={styles.retryText}>Retry</Text>
+                  </Pressable>
+                )}
                 <Pressable 
-                  style={({ pressed }) => [styles.retryBtn, pressed && { opacity: 0.8 }]} 
-                  onPress={() => connectToPeer(targetDevice)}
+                  style={({ pressed }) => [styles.disconnectBtn, pressed && { opacity: 0.8 }]} 
+                  onPress={disconnectPeer}
                   android_ripple={{ color: 'rgba(255, 255, 255, 0.3)' }}
                 >
-                  <Text style={styles.retryText}>Retry Key</Text>
+                  <Text style={styles.disconnectText}>X</Text>
                 </Pressable>
-              )}
+              </View>
             </View>
           ) : (
             <Pressable style={styles.pairNoticeRow} onPress={() => setIsScanning(true)}>
@@ -710,8 +758,8 @@ const styles = StyleSheet.create({
   },
   peerText: {
     color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 13,
+    fontWeight: '600',
+    fontSize: 12,
   },
   pqcStatus: {
     color: '#B2DFDB',
@@ -732,6 +780,21 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 11,
     fontWeight: '700',
+  },
+  disconnectBtn: {
+    backgroundColor: 'rgba(255, 60, 60, 0.2)',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 60, 60, 0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  disconnectText: {
+    color: '#ff6b6b',
+    fontWeight: '700',
+    fontSize: 12,
   },
   pairNoticeRow: {
     alignItems: 'center',

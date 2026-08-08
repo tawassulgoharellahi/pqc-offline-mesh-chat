@@ -733,6 +733,14 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -762,6 +770,8 @@ internal interface UniffiLib : Library {
     ): RustBuffer.ByValue
     fun uniffi_rust_core_fn_method_chatsession_encrypt_message(`ptr`: Pointer,`plaintext`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_rust_core_fn_method_chatsession_export_master_key(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_rust_core_fn_clone_chunkingengine(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
     fun uniffi_rust_core_fn_free_chunkingengine(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
@@ -780,6 +790,8 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_rust_core_fn_constructor_identitykeys_generate(uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
+    fun uniffi_rust_core_fn_method_identitykeys_export_private_keys_base64(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_rust_core_fn_method_identitykeys_export_public_keys_base64(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_rust_core_fn_method_identitykeys_get_dilithium_public_key(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
@@ -798,8 +810,12 @@ internal interface UniffiLib : Library {
     ): RustBuffer.ByValue
     fun uniffi_rust_core_fn_func_deserialize_chunk(`data`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_rust_core_fn_func_import_identity_keys(`base64Json`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Pointer
     fun uniffi_rust_core_fn_func_perform_hybrid_handshake(`myKeys`: Pointer,`theirX25519Pk`: RustBuffer.ByValue,`theirKyberPk`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_rust_core_fn_func_restore_chat_session(`masterKey`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Pointer
     fun uniffi_rust_core_fn_func_serialize_chunk(`chunk`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun ffi_rust_core_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -916,7 +932,11 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_rust_core_checksum_func_deserialize_chunk(
     ): Short
+    fun uniffi_rust_core_checksum_func_import_identity_keys(
+    ): Short
     fun uniffi_rust_core_checksum_func_perform_hybrid_handshake(
+    ): Short
+    fun uniffi_rust_core_checksum_func_restore_chat_session(
     ): Short
     fun uniffi_rust_core_checksum_func_serialize_chunk(
     ): Short
@@ -924,11 +944,15 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_rust_core_checksum_method_chatsession_encrypt_message(
     ): Short
+    fun uniffi_rust_core_checksum_method_chatsession_export_master_key(
+    ): Short
     fun uniffi_rust_core_checksum_method_chunkingengine_is_message_seen(
     ): Short
     fun uniffi_rust_core_checksum_method_chunkingengine_mark_message_seen(
     ): Short
     fun uniffi_rust_core_checksum_method_chunkingengine_split_message(
+    ): Short
+    fun uniffi_rust_core_checksum_method_identitykeys_export_private_keys_base64(
     ): Short
     fun uniffi_rust_core_checksum_method_identitykeys_export_public_keys_base64(
     ): Short
@@ -968,7 +992,13 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_rust_core_checksum_func_deserialize_chunk() != 44138.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_rust_core_checksum_func_import_identity_keys() != 36128.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_rust_core_checksum_func_perform_hybrid_handshake() != 4846.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_rust_core_checksum_func_restore_chat_session() != 33533.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_rust_core_checksum_func_serialize_chunk() != 50648.toShort()) {
@@ -980,6 +1010,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_rust_core_checksum_method_chatsession_encrypt_message() != 25654.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_rust_core_checksum_method_chatsession_export_master_key() != 50350.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_rust_core_checksum_method_chunkingengine_is_message_seen() != 18733.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -987,6 +1020,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_rust_core_checksum_method_chunkingengine_split_message() != 52717.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_rust_core_checksum_method_identitykeys_export_private_keys_base64() != 6092.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_rust_core_checksum_method_identitykeys_export_public_keys_base64() != 7476.toShort()) {
@@ -1350,6 +1386,8 @@ public interface ChatSessionInterface {
     
     fun `encryptMessage`(`plaintext`: kotlin.String): kotlin.ByteArray
     
+    fun `exportMasterKey`(): kotlin.ByteArray
+    
     companion object
 }
 
@@ -1461,6 +1499,18 @@ open class ChatSession: Disposable, AutoCloseable, ChatSessionInterface {
     uniffiRustCallWithError(CryptoException) { _status ->
     UniffiLib.INSTANCE.uniffi_rust_core_fn_method_chatsession_encrypt_message(
         it, FfiConverterString.lower(`plaintext`),_status)
+}
+    }
+    )
+    }
+    
+
+    override fun `exportMasterKey`(): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_rust_core_fn_method_chatsession_export_master_key(
+        it, _status)
 }
     }
     )
@@ -1885,6 +1935,8 @@ public object FfiConverterTypeChunkingEngine: FfiConverter<ChunkingEngine, Point
 
 public interface IdentityKeysInterface {
     
+    fun `exportPrivateKeysBase64`(): kotlin.String
+    
     fun `exportPublicKeysBase64`(): kotlin.String
     
     fun `getDilithiumPublicKey`(): kotlin.ByteArray
@@ -1976,6 +2028,18 @@ open class IdentityKeys: Disposable, AutoCloseable, IdentityKeysInterface {
             UniffiLib.INSTANCE.uniffi_rust_core_fn_clone_identitykeys(pointer!!, status)
         }
     }
+
+    override fun `exportPrivateKeysBase64`(): kotlin.String {
+            return FfiConverterString.lift(
+    callWithPointer {
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_rust_core_fn_method_identitykeys_export_private_keys_base64(
+        it, _status)
+}
+    }
+    )
+    }
+    
 
     override fun `exportPublicKeysBase64`(): kotlin.String {
             return FfiConverterString.lift(
@@ -2618,11 +2682,31 @@ public object FfiConverterSequenceTypeMeshChunk: FfiConverterRustBuffer<List<Mes
     }
     
 
+    @Throws(CryptoException::class) fun `importIdentityKeys`(`base64Json`: kotlin.String): IdentityKeys {
+            return FfiConverterTypeIdentityKeys.lift(
+    uniffiRustCallWithError(CryptoException) { _status ->
+    UniffiLib.INSTANCE.uniffi_rust_core_fn_func_import_identity_keys(
+        FfiConverterString.lower(`base64Json`),_status)
+}
+    )
+    }
+    
+
     @Throws(CryptoException::class) fun `performHybridHandshake`(`myKeys`: IdentityKeys, `theirX25519Pk`: kotlin.ByteArray, `theirKyberPk`: kotlin.ByteArray): kotlin.ByteArray {
             return FfiConverterByteArray.lift(
     uniffiRustCallWithError(CryptoException) { _status ->
     UniffiLib.INSTANCE.uniffi_rust_core_fn_func_perform_hybrid_handshake(
         FfiConverterTypeIdentityKeys.lower(`myKeys`),FfiConverterByteArray.lower(`theirX25519Pk`),FfiConverterByteArray.lower(`theirKyberPk`),_status)
+}
+    )
+    }
+    
+
+    @Throws(CryptoException::class) fun `restoreChatSession`(`masterKey`: kotlin.ByteArray): ChatSession {
+            return FfiConverterTypeChatSession.lift(
+    uniffiRustCallWithError(CryptoException) { _status ->
+    UniffiLib.INSTANCE.uniffi_rust_core_fn_func_restore_chat_session(
+        FfiConverterByteArray.lower(`masterKey`),_status)
 }
     )
     }

@@ -1,5 +1,8 @@
 package com.pqcmeshchat
 
+import android.content.Context
+import android.content.SharedPreferences
+import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
@@ -11,8 +14,17 @@ import org.json.JSONObject
 class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
 
     companion object {
+        private const val PREFS_NAME = "pqc_crypto_prefs"
+        private const val KEY_PRIVATE_IDENTITY = "identity_private_keys"
+        private const val KEY_MASTER_KEY = "session_master_key"
+        private const val KEY_TARGET_MAC = "session_target_mac"
+
         var identityKeys: IdentityKeys? = null
         var chatSession: ChatSession? = null
+    }
+
+    private val prefs: SharedPreferences by lazy {
+        reactApplicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
 
     override fun getName(): String {
@@ -23,7 +35,24 @@ class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     fun generateKeys(promise: Promise) {
         try {
             if (identityKeys == null) {
-                identityKeys = IdentityKeys.generate()
+                val savedPrivateKeysB64 = prefs.getString(KEY_PRIVATE_IDENTITY, null)
+                if (!savedPrivateKeysB64.isNullOrEmpty()) {
+                    try {
+                        identityKeys = importIdentityKeys(savedPrivateKeysB64)
+                        android.util.Log.i("CryptoModule", "Restored existing PQC identity keys from storage")
+                    } catch (e: Exception) {
+                        android.util.Log.w("CryptoModule", "Failed to import saved keys, generating new pair: ${e.message}")
+                        identityKeys = null
+                    }
+                }
+
+                if (identityKeys == null) {
+                    val newKeys = IdentityKeys.generate()
+                    identityKeys = newKeys
+                    val privateKeysB64 = newKeys.exportPrivateKeysBase64()
+                    prefs.edit().putString(KEY_PRIVATE_IDENTITY, privateKeysB64).apply()
+                    android.util.Log.i("CryptoModule", "Generated and stored new PQC identity keys")
+                }
             }
             promise.resolve("Keys Generated Successfully")
         } catch (e: Exception) {
@@ -35,9 +64,15 @@ class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     fun resetSession(promise: Promise) {
         try {
             chatSession = null
-            identityKeys = IdentityKeys.generate()
-            val newKeysJson = identityKeys?.exportPublicKeysBase64() ?: ""
-            android.util.Log.i("CryptoModule", "Session purged and new identity keys generated successfully")
+            prefs.edit().remove(KEY_MASTER_KEY).remove(KEY_TARGET_MAC).apply()
+            
+            val newKeys = IdentityKeys.generate()
+            identityKeys = newKeys
+            val privateKeysB64 = newKeys.exportPrivateKeysBase64()
+            prefs.edit().putString(KEY_PRIVATE_IDENTITY, privateKeysB64).apply()
+            
+            val newKeysJson = newKeys.exportPublicKeysBase64()
+            android.util.Log.i("CryptoModule", "Session purged and new identity keys stored successfully")
             promise.resolve(newKeysJson)
         } catch (e: Exception) {
             promise.reject("RESET_FAILED", e)
@@ -83,9 +118,60 @@ class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             // Initialize chat session
             chatSession = ChatSession(masterKey)
             
+            // Save master key to SharedPreferences
+            val masterKeyB64 = Base64.encodeToString(masterKey, Base64.NO_WRAP)
+            prefs.edit().putString(KEY_MASTER_KEY, masterKeyB64).apply()
+            
             promise.resolve("Handshake successful, secure session established")
         } catch (e: Exception) {
             promise.reject("HANDSHAKE_FAILED", e)
+        }
+    }
+
+    @ReactMethod
+    fun setTargetDevice(targetMac: String, promise: Promise) {
+        try {
+            prefs.edit().putString(KEY_TARGET_MAC, targetMac).apply()
+            promise.resolve("Target MAC saved")
+        } catch (e: Exception) {
+            promise.reject("SET_TARGET_FAILED", e)
+        }
+    }
+
+    @ReactMethod
+    fun restoreSession(promise: Promise) {
+        try {
+            val masterKeyB64 = prefs.getString(KEY_MASTER_KEY, null)
+            val targetMac = prefs.getString(KEY_TARGET_MAC, null)
+
+            val result = Arguments.createMap()
+            if (!masterKeyB64.isNullOrEmpty() && !targetMac.isNullOrEmpty()) {
+                val masterKeyBytes = Base64.decode(masterKeyB64, Base64.DEFAULT)
+                chatSession = ChatSession(masterKeyBytes)
+                result.putBoolean("restored", true)
+                result.putString("targetMac", targetMac)
+                android.util.Log.i("CryptoModule", "Restored existing PQC session for peer $targetMac")
+            } else {
+                result.putBoolean("restored", false)
+            }
+            promise.resolve(result)
+        } catch (e: Exception) {
+            android.util.Log.w("CryptoModule", "Session restore error: ${e.message}")
+            val result = Arguments.createMap()
+            result.putBoolean("restored", false)
+            promise.resolve(result)
+        }
+    }
+
+    @ReactMethod
+    fun clearSession(promise: Promise) {
+        try {
+            chatSession = null
+            prefs.edit().remove(KEY_MASTER_KEY).remove(KEY_TARGET_MAC).apply()
+            android.util.Log.i("CryptoModule", "Session and target MAC cleared")
+            promise.resolve("Session cleared")
+        } catch (e: Exception) {
+            promise.reject("CLEAR_FAILED", e)
         }
     }
     

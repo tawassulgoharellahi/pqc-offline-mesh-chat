@@ -87,6 +87,7 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags "-std=c++20 -include ${projectDir}/src/main/cpp/format_fix.h"
+                arguments "-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=FALSE", "-DANDROID_LD=lld"
             }
         }
     }
@@ -126,4 +127,7 @@ dependencies {
 
     // Google ML Kit for VisionCamera barcode/QR code scanning
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    
+    // Encrypted Storage
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
 }

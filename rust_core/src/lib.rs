@@ -4,18 +4,36 @@ use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use hkdf::Hkdf;
 use pqcrypto_kyber::kyber768::{
-    keypair, encapsulate, PublicKey as KyberPublicKey,
+    keypair, PublicKey as KyberPublicKey,
 };
 use pqcrypto_dilithium::dilithium3::{
     keypair as sign_keypair,
 };
-use pqcrypto_traits::kem::{PublicKey as KemPK, SecretKey as KemSK, SharedSecret as KemSS};
+use pqcrypto_traits::kem::{PublicKey as KemPK, SecretKey as KemSK};
 use pqcrypto_traits::sign::{PublicKey as SignPK, SecretKey as SignSK};
 use rand_core::{OsRng, RngCore};
 use sha2::Sha256;
 use x25519_dalek::{StaticSecret, PublicKey as X25519PublicKey};
 use std::sync::{Arc, Mutex};
 use std::fmt;
+
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize)]
+struct PublicKeysPayload {
+    x25519: String,
+    kyber: String,
+}
+
+#[derive(Serialize, Deserialize)]
+struct PrivateKeysPayload {
+    x25519_sk: String,
+    x25519_pk: String,
+    kyber_sk: String,
+    kyber_pk: String,
+    dilithium_sk: String,
+    dilithium_pk: String,
+}
 
 #[derive(uniffi::Error, Debug)]
 pub enum CryptoError {
@@ -84,13 +102,6 @@ impl IdentityKeys {
     pub fn export_public_keys_base64(&self) -> String {
         use base64::engine::general_purpose::STANDARD;
         use base64::Engine;
-        use serde::{Serialize, Deserialize};
-        
-        #[derive(Serialize, Deserialize)]
-        struct PublicKeysPayload {
-            x25519: String,
-            kyber: String,
-        }
         
         let payload = PublicKeysPayload {
             x25519: STANDARD.encode(&self.x25519_pk),
@@ -99,6 +110,49 @@ impl IdentityKeys {
         
         serde_json::to_string(&payload).unwrap_or_default()
     }
+
+    pub fn export_private_keys_base64(&self) -> String {
+        use base64::engine::general_purpose::STANDARD;
+        use base64::Engine;
+
+        let payload = PrivateKeysPayload {
+            x25519_sk: STANDARD.encode(&self.x25519_sk),
+            x25519_pk: STANDARD.encode(&self.x25519_pk),
+            kyber_sk: STANDARD.encode(&self.kyber_sk),
+            kyber_pk: STANDARD.encode(&self.kyber_pk),
+            dilithium_sk: STANDARD.encode(&self.dilithium_sk),
+            dilithium_pk: STANDARD.encode(&self.dilithium_pk),
+        };
+
+        serde_json::to_string(&payload).unwrap_or_default()
+    }
+}
+
+#[uniffi::export]
+pub fn import_identity_keys(base64_json: String) -> Result<Arc<IdentityKeys>, CryptoError> {
+    use base64::engine::general_purpose::STANDARD;
+    use base64::Engine;
+
+    let payload: PrivateKeysPayload = serde_json::from_str(&base64_json).map_err(|_| CryptoError::InvalidKeyLength)?;
+
+    let mut x25519_sk = [0u8; 32];
+    let decoded_x25519_sk = STANDARD.decode(&payload.x25519_sk).map_err(|_| CryptoError::InvalidKeyLength)?;
+    if decoded_x25519_sk.len() != 32 { return Err(CryptoError::InvalidKeyLength); }
+    x25519_sk.copy_from_slice(&decoded_x25519_sk);
+
+    let mut x25519_pk = [0u8; 32];
+    let decoded_x25519_pk = STANDARD.decode(&payload.x25519_pk).map_err(|_| CryptoError::InvalidKeyLength)?;
+    if decoded_x25519_pk.len() != 32 { return Err(CryptoError::InvalidKeyLength); }
+    x25519_pk.copy_from_slice(&decoded_x25519_pk);
+
+    Ok(Arc::new(IdentityKeys {
+        x25519_sk,
+        x25519_pk,
+        kyber_sk: STANDARD.decode(&payload.kyber_sk).map_err(|_| CryptoError::InvalidKeyLength)?,
+        kyber_pk: STANDARD.decode(&payload.kyber_pk).map_err(|_| CryptoError::InvalidKeyLength)?,
+        dilithium_sk: STANDARD.decode(&payload.dilithium_sk).map_err(|_| CryptoError::InvalidKeyLength)?,
+        dilithium_pk: STANDARD.decode(&payload.dilithium_pk).map_err(|_| CryptoError::InvalidKeyLength)?,
+    }))
 }
 
 // Hybrid Handshake
@@ -140,6 +194,18 @@ pub fn perform_hybrid_handshake(
     Ok(okm.to_vec())
 }
 
+#[uniffi::export]
+pub fn restore_chat_session(master_key: Vec<u8>) -> Result<Arc<ChatSession>, CryptoError> {
+    if master_key.len() != 32 {
+        return Err(CryptoError::InvalidKeyLength);
+    }
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&master_key);
+    Ok(Arc::new(ChatSession {
+        current_key: Mutex::new(key),
+    }))
+}
+
 // Symmetric Ratchet
 #[derive(uniffi::Object)]
 pub struct ChatSession {
@@ -148,6 +214,11 @@ pub struct ChatSession {
 
 #[uniffi::export]
 impl ChatSession {
+    pub fn export_master_key(&self) -> Vec<u8> {
+        let key = self.current_key.lock().unwrap();
+        key.to_vec()
+    }
+
     #[uniffi::constructor]
     pub fn new(master_key: Vec<u8>) -> Result<Arc<Self>, CryptoError> {
         if master_key.len() != 32 {
@@ -168,7 +239,18 @@ impl ChatSession {
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
         
-        let ciphertext = cipher.encrypt(nonce, plaintext.as_bytes())
+        let plaintext_bytes = plaintext.as_bytes();
+        let mut payload = Vec::new();
+        if plaintext_bytes.len() > 100 {
+            payload.push(0x01);
+            let compressed = lz4_flex::compress_prepend_size(plaintext_bytes);
+            payload.extend_from_slice(&compressed);
+        } else {
+            payload.push(0x00);
+            payload.extend_from_slice(plaintext_bytes);
+        }
+        
+        let ciphertext = cipher.encrypt(nonce, payload.as_slice())
             .map_err(|_| CryptoError::EncryptionFailed)?;
             
         // Output format: Nonce (12) || Ciphertext
@@ -188,8 +270,21 @@ impl ChatSession {
         let nonce = Nonce::from_slice(&encrypted_data[0..12]);
         let ciphertext = &encrypted_data[12..];
         
-        let plaintext = cipher.decrypt(nonce, ciphertext)
+        let payload = cipher.decrypt(nonce, ciphertext)
             .map_err(|_| CryptoError::DecryptionFailed)?;
+            
+        if payload.is_empty() {
+            return Err(CryptoError::DecryptionFailed);
+        }
+        
+        let is_compressed = payload[0] == 0x01;
+        let data = &payload[1..];
+        
+        let plaintext = if is_compressed {
+            lz4_flex::decompress_size_prepended(data).map_err(|_| CryptoError::DecryptionFailed)?
+        } else {
+            data.to_vec()
+        };
             
         String::from_utf8(plaintext).map_err(|_| CryptoError::DecryptionFailed)
     }
