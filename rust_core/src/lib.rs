@@ -99,6 +99,15 @@ impl IdentityKeys {
         self.dilithium_pk.clone()
     }
     
+    pub fn sign_data(&self, message: Vec<u8>) -> Result<Vec<u8>, CryptoError> {
+        use pqcrypto_dilithium::dilithium3::{detached_sign, SecretKey as DilithiumSK};
+        use pqcrypto_traits::sign::DetachedSignature;
+        let sk = DilithiumSK::from_bytes(&self.dilithium_sk)
+            .map_err(|_| CryptoError::InvalidKeyLength)?;
+        let sig = detached_sign(&message, &sk);
+        Ok(sig.as_bytes().to_vec())
+    }
+    
     pub fn export_public_keys_base64(&self) -> String {
         use base64::engine::general_purpose::STANDARD;
         use base64::Engine;
@@ -288,6 +297,22 @@ impl ChatSession {
             
         String::from_utf8(plaintext).map_err(|_| CryptoError::DecryptionFailed)
     }
+}
+
+/// Standalone Dilithium-3 signature verification.
+#[uniffi::export]
+pub fn verify_signature(public_key: Vec<u8>, message: Vec<u8>, signature: Vec<u8>) -> bool {
+    use pqcrypto_dilithium::dilithium3::{verify_detached_signature, PublicKey as DilithiumPK, DetachedSignature as DilithiumSig};
+    use pqcrypto_traits::sign::{PublicKey, DetachedSignature};
+    let pk = match DilithiumPK::from_bytes(&public_key) {
+        Ok(k) => k,
+        Err(_) => return false,
+    };
+    let sig = match DilithiumSig::from_bytes(&signature) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    verify_detached_signature(&sig, &message, &pk).is_ok()
 }
 
 /// Standalone LZ4 compression for raw byte buffers.

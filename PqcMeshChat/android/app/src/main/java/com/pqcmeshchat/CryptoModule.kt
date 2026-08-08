@@ -232,4 +232,59 @@ class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             promise.reject("DECOMPRESS_FAILED", e)
         }
     }
+
+    @ReactMethod
+    fun emergencyWipe(promise: Promise) {
+        try {
+            // Zeroize in-memory keys
+            chatSession = null
+            identityKeys = null
+
+            // Purge SharedPreferences completely
+            prefs.edit().clear().apply()
+
+            // Generate fresh keys for clean restart
+            val newKeys = IdentityKeys.generate()
+            identityKeys = newKeys
+            val privateKeysB64 = newKeys.exportPrivateKeysBase64()
+            prefs.edit().putString(KEY_PRIVATE_IDENTITY, privateKeysB64).apply()
+
+            val newKeysJson = newKeys.exportPublicKeysBase64()
+            android.util.Log.i("CryptoModule", "EMERGENCY WIPE EXECUTED: All keys, secrets, and preferences zeroized")
+            promise.resolve(newKeysJson)
+        } catch (e: Exception) {
+            promise.reject("WIPE_FAILED", e)
+        }
+    }
+
+    @ReactMethod
+    fun signData(messageBase64: String, promise: Promise) {
+        try {
+            val keys = identityKeys
+            if (keys == null) {
+                promise.reject("NO_KEYS", "Identity keys not initialized")
+                return
+            }
+            val messageBytes = Base64.decode(messageBase64, Base64.DEFAULT)
+            val sigBytes = keys.signData(messageBytes)
+            val sigBase64 = Base64.encodeToString(sigBytes, Base64.NO_WRAP)
+            promise.resolve(sigBase64)
+        } catch (e: Exception) {
+            promise.reject("SIGN_FAILED", e)
+        }
+    }
+
+    @ReactMethod
+    fun verifySignature(pubKeyBase64: String, messageBase64: String, signatureBase64: String, promise: Promise) {
+        try {
+            val pubKeyBytes = Base64.decode(pubKeyBase64, Base64.DEFAULT)
+            val messageBytes = Base64.decode(messageBase64, Base64.DEFAULT)
+            val sigBytes = Base64.decode(signatureBase64, Base64.DEFAULT)
+
+            val isValid = verifySignature(pubKeyBytes, messageBytes, sigBytes)
+            promise.resolve(isValid)
+        } catch (e: Exception) {
+            promise.resolve(false)
+        }
+    }
 }

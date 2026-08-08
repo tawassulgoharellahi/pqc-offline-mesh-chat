@@ -745,6 +745,14 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -804,6 +812,8 @@ internal interface UniffiLib : Library {
     ): RustBuffer.ByValue
     fun uniffi_rust_core_fn_method_identitykeys_get_x25519_public_key(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_rust_core_fn_method_identitykeys_sign_data(`ptr`: Pointer,`message`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_rust_core_fn_clone_reassemblybuffer(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
     fun uniffi_rust_core_fn_free_reassemblybuffer(`ptr`: Pointer,uniffi_out_err: UniffiRustCallStatus, 
@@ -814,9 +824,13 @@ internal interface UniffiLib : Library {
     ): RustBuffer.ByValue
     fun uniffi_rust_core_fn_func_compress_data(`data`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_rust_core_fn_func_decode_binary_envelope(`data`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     fun uniffi_rust_core_fn_func_decompress_data(`data`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_rust_core_fn_func_deserialize_chunk(`data`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_rust_core_fn_func_encode_binary_envelope(`envelope`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_rust_core_fn_func_import_identity_keys(`base64Json`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
@@ -826,6 +840,8 @@ internal interface UniffiLib : Library {
     ): Pointer
     fun uniffi_rust_core_fn_func_serialize_chunk(`chunk`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    fun uniffi_rust_core_fn_func_verify_signature(`publicKey`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,`signature`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
     fun ffi_rust_core_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun ffi_rust_core_rustbuffer_from_bytes(`bytes`: ForeignBytes.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -940,9 +956,13 @@ internal interface UniffiLib : Library {
     ): Unit
     fun uniffi_rust_core_checksum_func_compress_data(
     ): Short
+    fun uniffi_rust_core_checksum_func_decode_binary_envelope(
+    ): Short
     fun uniffi_rust_core_checksum_func_decompress_data(
     ): Short
     fun uniffi_rust_core_checksum_func_deserialize_chunk(
+    ): Short
+    fun uniffi_rust_core_checksum_func_encode_binary_envelope(
     ): Short
     fun uniffi_rust_core_checksum_func_import_identity_keys(
     ): Short
@@ -951,6 +971,8 @@ internal interface UniffiLib : Library {
     fun uniffi_rust_core_checksum_func_restore_chat_session(
     ): Short
     fun uniffi_rust_core_checksum_func_serialize_chunk(
+    ): Short
+    fun uniffi_rust_core_checksum_func_verify_signature(
     ): Short
     fun uniffi_rust_core_checksum_method_chatsession_decrypt_message(
     ): Short
@@ -973,6 +995,8 @@ internal interface UniffiLib : Library {
     fun uniffi_rust_core_checksum_method_identitykeys_get_kyber_public_key(
     ): Short
     fun uniffi_rust_core_checksum_method_identitykeys_get_x25519_public_key(
+    ): Short
+    fun uniffi_rust_core_checksum_method_identitykeys_sign_data(
     ): Short
     fun uniffi_rust_core_checksum_method_reassemblybuffer_add_chunk(
     ): Short
@@ -1004,10 +1028,16 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_rust_core_checksum_func_compress_data() != 51222.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_rust_core_checksum_func_decode_binary_envelope() != 4686.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_rust_core_checksum_func_decompress_data() != 38.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_rust_core_checksum_func_deserialize_chunk() != 44138.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_rust_core_checksum_func_encode_binary_envelope() != 13382.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_rust_core_checksum_func_import_identity_keys() != 36128.toShort()) {
@@ -1020,6 +1050,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_rust_core_checksum_func_serialize_chunk() != 50648.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_rust_core_checksum_func_verify_signature() != 4394.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_rust_core_checksum_method_chatsession_decrypt_message() != 18374.toShort()) {
@@ -1053,6 +1086,9 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_rust_core_checksum_method_identitykeys_get_x25519_public_key() != 9906.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_rust_core_checksum_method_identitykeys_sign_data() != 2419.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_rust_core_checksum_method_reassemblybuffer_add_chunk() != 50839.toShort()) {
@@ -1963,6 +1999,8 @@ public interface IdentityKeysInterface {
     
     fun `getX25519PublicKey`(): kotlin.ByteArray
     
+    fun `signData`(`message`: kotlin.ByteArray): kotlin.ByteArray
+    
     companion object
 }
 
@@ -2101,6 +2139,19 @@ open class IdentityKeys: Disposable, AutoCloseable, IdentityKeysInterface {
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_rust_core_fn_method_identitykeys_get_x25519_public_key(
         it, _status)
+}
+    }
+    )
+    }
+    
+
+    
+    @Throws(CryptoException::class)override fun `signData`(`message`: kotlin.ByteArray): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithPointer {
+    uniffiRustCallWithError(CryptoException) { _status ->
+    UniffiLib.INSTANCE.uniffi_rust_core_fn_method_identitykeys_sign_data(
+        it, FfiConverterByteArray.lower(`message`),_status)
 }
     }
     )
@@ -2406,6 +2457,58 @@ public object FfiConverterTypeReassemblyBuffer: FfiConverter<ReassemblyBuffer, P
 
 
 /**
+ * Compact binary envelope replacing JSON string payloads.
+ */
+data class BinaryEnvelope (
+    var `msgType`: kotlin.UByte, 
+    var `ttl`: kotlin.UByte, 
+    var `msgId`: kotlin.ByteArray, 
+    var `dest`: kotlin.String, 
+    var `sender`: kotlin.String, 
+    var `payload`: kotlin.ByteArray, 
+    var `signature`: kotlin.ByteArray
+) {
+    
+    companion object
+}
+
+public object FfiConverterTypeBinaryEnvelope: FfiConverterRustBuffer<BinaryEnvelope> {
+    override fun read(buf: ByteBuffer): BinaryEnvelope {
+        return BinaryEnvelope(
+            FfiConverterUByte.read(buf),
+            FfiConverterUByte.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterByteArray.read(buf),
+            FfiConverterByteArray.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: BinaryEnvelope) = (
+            FfiConverterUByte.allocationSize(value.`msgType`) +
+            FfiConverterUByte.allocationSize(value.`ttl`) +
+            FfiConverterByteArray.allocationSize(value.`msgId`) +
+            FfiConverterString.allocationSize(value.`dest`) +
+            FfiConverterString.allocationSize(value.`sender`) +
+            FfiConverterByteArray.allocationSize(value.`payload`) +
+            FfiConverterByteArray.allocationSize(value.`signature`)
+    )
+
+    override fun write(value: BinaryEnvelope, buf: ByteBuffer) {
+            FfiConverterUByte.write(value.`msgType`, buf)
+            FfiConverterUByte.write(value.`ttl`, buf)
+            FfiConverterByteArray.write(value.`msgId`, buf)
+            FfiConverterString.write(value.`dest`, buf)
+            FfiConverterString.write(value.`sender`, buf)
+            FfiConverterByteArray.write(value.`payload`, buf)
+            FfiConverterByteArray.write(value.`signature`, buf)
+    }
+}
+
+
+
+/**
  * A single chunk of a larger message, ready to be transmitted over BLE GATT.
  */
 data class MeshChunk (
@@ -2703,6 +2806,16 @@ public object FfiConverterSequenceTypeMeshChunk: FfiConverterRustBuffer<List<Mes
     }
     
 
+    @Throws(ProtocolException::class) fun `decodeBinaryEnvelope`(`data`: kotlin.ByteArray): BinaryEnvelope {
+            return FfiConverterTypeBinaryEnvelope.lift(
+    uniffiRustCallWithError(ProtocolException) { _status ->
+    UniffiLib.INSTANCE.uniffi_rust_core_fn_func_decode_binary_envelope(
+        FfiConverterByteArray.lower(`data`),_status)
+}
+    )
+    }
+    
+
         /**
          * Standalone LZ4 decompression for raw byte buffers.
          */
@@ -2721,6 +2834,15 @@ public object FfiConverterSequenceTypeMeshChunk: FfiConverterRustBuffer<List<Mes
     uniffiRustCallWithError(ProtocolException) { _status ->
     UniffiLib.INSTANCE.uniffi_rust_core_fn_func_deserialize_chunk(
         FfiConverterByteArray.lower(`data`),_status)
+}
+    )
+    }
+    
+ fun `encodeBinaryEnvelope`(`envelope`: BinaryEnvelope): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_rust_core_fn_func_encode_binary_envelope(
+        FfiConverterTypeBinaryEnvelope.lower(`envelope`),_status)
 }
     )
     }
@@ -2760,6 +2882,18 @@ public object FfiConverterSequenceTypeMeshChunk: FfiConverterRustBuffer<List<Mes
     uniffiRustCall() { _status ->
     UniffiLib.INSTANCE.uniffi_rust_core_fn_func_serialize_chunk(
         FfiConverterTypeMeshChunk.lower(`chunk`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * Standalone Dilithium-3 signature verification.
+         */ fun `verifySignature`(`publicKey`: kotlin.ByteArray, `message`: kotlin.ByteArray, `signature`: kotlin.ByteArray): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_rust_core_fn_func_verify_signature(
+        FfiConverterByteArray.lower(`publicKey`),FfiConverterByteArray.lower(`message`),FfiConverterByteArray.lower(`signature`),_status)
 }
     )
     }

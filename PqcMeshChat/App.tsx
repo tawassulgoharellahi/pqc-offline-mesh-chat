@@ -352,6 +352,51 @@ export default function App() {
     }
   };
 
+  const tapCountRef = useRef<number>(0);
+  const lastTapTimeRef = useRef<number>(0);
+
+  const handleHeaderTap = async () => {
+    const now = Date.now();
+    if (now - lastTapTimeRef.current > 1500) {
+      tapCountRef.current = 1;
+    } else {
+      tapCountRef.current += 1;
+    }
+    lastTapTimeRef.current = now;
+
+    if (tapCountRef.current >= 3) {
+      tapCountRef.current = 0;
+      Alert.alert(
+        "Emergency Panic Wipe",
+        "Perform Emergency Panic Wipe? All PQC identity keys, master secrets, and message logs will be zeroized immediately.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "WIPE EVERYTHING",
+            style: "destructive",
+            onPress: async () => {
+              try {
+                updateHandshakeState(false);
+                setTargetDevice('');
+                setMessages([]);
+                setDiscoveredPeers([]);
+                const newKeysJson = await CryptoModule.emergencyWipe();
+                await BLEMeshModule.resetMeshState();
+                if (newKeysJson) {
+                  setMyKeys(newKeysJson);
+                  setQrPayload(JSON.stringify({ m: myMac, k: newKeysJson }));
+                }
+                Alert.alert("Emergency Wipe Completed", "All keys, session secrets, and message logs zeroized.");
+              } catch (e: any) {
+                Alert.alert("Wipe Notice", e.message);
+              }
+            }
+          }
+        ]
+      );
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#075E54" />
@@ -361,7 +406,7 @@ export default function App() {
         
         {/* Navigation Header Bar */}
         <View style={styles.header}>
-          <View style={styles.headerLeft}>
+          <Pressable style={styles.headerLeft} onPress={handleHeaderTap}>
             <Text style={[styles.headerTitle, isSmallScreen && { fontSize: 17 }]}>PQC Offline Chat</Text>
             <View style={styles.statusRow}>
               <View style={styles.activeDot} />
@@ -369,7 +414,7 @@ export default function App() {
                 Node: {myMac ? myMac.slice(-10) : "Active"} • Kyber-768
               </Text>
             </View>
-          </View>
+          </Pressable>
 
           {/* Clean Icon-Only Top Buttons (No Text) */}
           <View style={styles.headerRight}>

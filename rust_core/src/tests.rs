@@ -66,6 +66,43 @@ use crate::*;
         assert_eq!(decrypted, large_msg);
     }
 
+    #[test]
+    fn test_dilithium_signature() {
+        let keys = IdentityKeys::generate();
+        let msg = b"Post-Quantum Message Integrity Test".to_vec();
+        let sig = keys.sign_data(msg.clone()).unwrap();
+        
+        let valid = verify_signature(keys.get_dilithium_public_key(), msg.clone(), sig.clone());
+        assert!(valid);
+
+        let invalid = verify_signature(keys.get_dilithium_public_key(), b"Tampered Message".to_vec(), sig);
+        assert!(!invalid);
+    }
+
+    #[test]
+    fn test_binary_envelope() {
+        let envelope = BinaryEnvelope {
+            msg_type: 1,
+            ttl: 5,
+            msg_id: vec![0xAB; 16],
+            dest: "05:58:32:50:8I:00".to_string(),
+            sender: "77:BE:62:14:00:00".to_string(),
+            payload: b"Encrypted Payload Test".to_vec(),
+            signature: vec![0xEE; 64],
+        };
+
+        let encoded = encode_binary_envelope(&envelope);
+        let decoded = decode_binary_envelope(encoded).unwrap();
+
+        assert_eq!(decoded.msg_type, envelope.msg_type);
+        assert_eq!(decoded.ttl, envelope.ttl);
+        assert_eq!(decoded.msg_id, envelope.msg_id);
+        assert_eq!(decoded.dest, envelope.dest);
+        assert_eq!(decoded.sender, envelope.sender);
+        assert_eq!(decoded.payload, envelope.payload);
+        assert_eq!(decoded.signature, envelope.signature);
+    }
+
     use crate::mesh_protocol::*;
 
     #[test]

@@ -177,3 +177,93 @@ impl ReassemblyBuffer {
         Ok(None)
     }
 }
+
+/// Compact binary envelope replacing JSON string payloads.
+#[derive(uniffi::Record)]
+pub struct BinaryEnvelope {
+    pub msg_type: u8, // 1 = MSG, 2 = KEY_REQ, 3 = KEY_RESP
+    pub ttl: u8,
+    pub msg_id: Vec<u8>, // 16 bytes
+    pub dest: String,
+    pub sender: String,
+    pub payload: Vec<u8>,
+    pub signature: Vec<u8>,
+}
+
+#[uniffi::export]
+pub fn encode_binary_envelope(envelope: &BinaryEnvelope) -> Vec<u8> {
+    let mut data = Vec::new();
+    // Magic bytes: [0x50, 0x51] ('PQ')
+    data.push(0x50);
+    data.push(0x51);
+    data.push(envelope.msg_type);
+    data.push(envelope.ttl);
+    
+    // Msg ID: 16 bytes padded
+    let mut msg_id_bytes = [0u8; 16];
+    let copy_len = std::cmp::min(envelope.msg_id.len(), 16);
+    msg_id_bytes[..copy_len].copy_from_slice(&envelope.msg_id[..copy_len]);
+    data.extend_from_slice(&msg_id_bytes);
+
+    // Dest string
+    let dest_bytes = envelope.dest.as_bytes();
+    data.extend_from_slice(&(dest_bytes.len() as u16).to_be_bytes());
+    data.extend_from_slice(dest_bytes);
+
+    // Sender string
+    let sender_bytes = envelope.sender.as_bytes();
+    data.extend_from_slice(&(sender_bytes.len() as u16).to_be_bytes());
+    data.extend_from_slice(sender_bytes);
+
+    // Payload
+    data.extend_from_slice(&(envelope.payload.len() as u32).to_be_bytes());
+    data.extend_from_slice(&envelope.payload);
+
+    // Signature
+    data.extend_from_slice(&(envelope.signature.len() as u16).to_be_bytes());
+    data.extend_from_slice(&envelope.signature);
+
+    data
+}
+
+#[uniffi::export]
+pub fn decode_binary_envelope(data: Vec<u8>) -> Result<BinaryEnvelope, ProtocolError> {
+    if data.len() < 2 + 1 + 1 + 16 + 2 + 2 + 4 + 2 {
+        return Err(ProtocolError::InvalidChunkSize);
+    }
+    if data[0] != 0x50 || data[1] != 0x51 {
+        return Err(ProtocolError::InvalidMessageId);
+    }
+
+    let mut cursor = 2;
+    let msg_type = data[cursor]; cursor += 1;
+    let ttl = data[cursor]; cursor += 1;
+
+    let msg_id = data[cursor..cursor + 16].to_vec(); cursor += 16;
+
+    let dest_len = u16::from_be_bytes([data[cursor], data[cursor + 1]]) as usize; cursor += 2;
+    if cursor + dest_len > data.len() { return Err(ProtocolError::InvalidChunkSize); }
+    let dest = String::from_utf8(data[cursor..cursor + dest_len].to_vec()).map_err(|_| ProtocolError::InvalidMessageId)?; cursor += dest_len;
+
+    let sender_len = u16::from_be_bytes([data[cursor], data[cursor + 1]]) as usize; cursor += 2;
+    if cursor + sender_len > data.len() { return Err(ProtocolError::InvalidChunkSize); }
+    let sender = String::from_utf8(data[cursor..cursor + sender_len].to_vec()).map_err(|_| ProtocolError::InvalidMessageId)?; cursor += sender_len;
+
+    let payload_len = u32::from_be_bytes([data[cursor], data[cursor + 1], data[cursor + 2], data[cursor + 3]]) as usize; cursor += 4;
+    if cursor + payload_len > data.len() { return Err(ProtocolError::InvalidChunkSize); }
+    let payload = data[cursor..cursor + payload_len].to_vec(); cursor += payload_len;
+
+    let sig_len = u16::from_be_bytes([data[cursor], data[cursor + 1]]) as usize; cursor += 2;
+    if cursor + sig_len > data.len() { return Err(ProtocolError::InvalidChunkSize); }
+    let signature = data[cursor..cursor + sig_len].to_vec();
+
+    Ok(BinaryEnvelope {
+        msg_type,
+        ttl,
+        msg_id,
+        dest,
+        sender,
+        payload,
+        signature,
+    })
+}
