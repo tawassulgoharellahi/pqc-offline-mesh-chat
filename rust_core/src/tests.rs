@@ -26,6 +26,46 @@ use crate::*;
         assert_eq!(decrypted, "Hello Bob!");
     }
 
+    #[test]
+    fn test_lz4_standalone_compression() {
+        // Small payload <= 100 bytes (should remain raw with 0x00 header)
+        let small_input = b"Small payload test".to_vec();
+        let compressed_small = compress_data(small_input.clone());
+        assert_eq!(compressed_small[0], 0x00);
+        let decompressed_small = decompress_data(compressed_small).unwrap();
+        assert_eq!(decompressed_small, small_input);
+
+        // Large repetitive payload > 100 bytes (should compress with 0x01 header)
+        let large_input = "Post-Quantum Cryptography Mesh Network LZ4 Compression Test ".repeat(20).into_bytes();
+        assert!(large_input.len() > 100);
+        let compressed_large = compress_data(large_input.clone());
+        assert_eq!(compressed_large[0], 0x01);
+        assert!(compressed_large.len() < large_input.len()); // Verify size reduction!
+        
+        let decompressed_large = decompress_data(compressed_large).unwrap();
+        assert_eq!(decompressed_large, large_input);
+    }
+
+    #[test]
+    fn test_large_message_encryption_and_lz4() {
+        let alice_keys = IdentityKeys::generate();
+        let bob_keys = IdentityKeys::generate();
+
+        let master_key = perform_hybrid_handshake(
+            alice_keys.clone(),
+            bob_keys.get_x25519_public_key(),
+            bob_keys.get_kyber_public_key(),
+        ).unwrap();
+
+        let session = ChatSession::new(master_key).unwrap();
+        let large_msg = "Hello World! This is a long post-quantum encrypted message over BLE. ".repeat(15);
+        
+        let encrypted = session.encrypt_message(large_msg.clone()).unwrap();
+        let decrypted = session.decrypt_message(encrypted).unwrap();
+        
+        assert_eq!(decrypted, large_msg);
+    }
+
     use crate::mesh_protocol::*;
 
     #[test]

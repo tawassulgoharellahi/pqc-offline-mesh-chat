@@ -208,4 +208,28 @@ class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             promise.reject("DECRYPTION_FAILED", e)
         }
     }
+
+    @ReactMethod
+    fun compressData(base64Input: String, promise: Promise) {
+        try {
+            val inputBytes = Base64.decode(base64Input, Base64.DEFAULT)
+            val compressedBytes = compressData(inputBytes)
+            val compressedBase64 = Base64.encodeToString(compressedBytes, Base64.NO_WRAP)
+            promise.resolve(compressedBase64)
+        } catch (e: Exception) {
+            promise.reject("COMPRESS_FAILED", e)
+        }
+    }
+
+    @ReactMethod
+    fun decompressData(base64Input: String, promise: Promise) {
+        try {
+            val inputBytes = Base64.decode(base64Input, Base64.DEFAULT)
+            val decompressedBytes = decompressData(inputBytes)
+            val decompressedBase64 = Base64.encodeToString(decompressedBytes, Base64.NO_WRAP)
+            promise.resolve(decompressedBase64)
+        } catch (e: Exception) {
+            promise.reject("DECOMPRESS_FAILED", e)
+        }
+    }
 }

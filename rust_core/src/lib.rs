@@ -289,5 +289,38 @@ impl ChatSession {
         String::from_utf8(plaintext).map_err(|_| CryptoError::DecryptionFailed)
     }
 }
+
+/// Standalone LZ4 compression for raw byte buffers.
+/// Adds a 1-byte header: 0x01 = LZ4 Compressed, 0x00 = Uncompressed Raw.
+#[uniffi::export]
+pub fn compress_data(data: Vec<u8>) -> Vec<u8> {
+    if data.len() > 100 {
+        let mut result = vec![0x01];
+        let compressed = lz4_flex::compress_prepend_size(&data);
+        result.extend_from_slice(&compressed);
+        result
+    } else {
+        let mut result = vec![0x00];
+        result.extend_from_slice(&data);
+        result
+    }
+}
+
+/// Standalone LZ4 decompression for raw byte buffers.
+#[uniffi::export]
+pub fn decompress_data(data: Vec<u8>) -> Result<Vec<u8>, CryptoError> {
+    if data.is_empty() {
+        return Err(CryptoError::DecryptionFailed);
+    }
+    if data[0] == 0x01 {
+        lz4_flex::decompress_size_prepended(&data[1..]).map_err(|_| CryptoError::DecryptionFailed)
+    } else if data[0] == 0x00 {
+        Ok(data[1..].to_vec())
+    } else {
+        Err(CryptoError::DecryptionFailed)
+    }
+}
+
+#[cfg(test)]
 mod tests;
 pub mod mesh_protocol;

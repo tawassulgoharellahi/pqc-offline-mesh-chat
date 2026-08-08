@@ -741,6 +741,10 @@ internal interface UniffiForeignFutureCompleteVoid : com.sun.jna.Callback {
 
 
 
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -807,6 +811,10 @@ internal interface UniffiLib : Library {
     fun uniffi_rust_core_fn_constructor_reassemblybuffer_new(uniffi_out_err: UniffiRustCallStatus, 
     ): Pointer
     fun uniffi_rust_core_fn_method_reassemblybuffer_add_chunk(`ptr`: Pointer,`chunk`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_rust_core_fn_func_compress_data(`data`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    fun uniffi_rust_core_fn_func_decompress_data(`data`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     fun uniffi_rust_core_fn_func_deserialize_chunk(`data`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -930,6 +938,10 @@ internal interface UniffiLib : Library {
     ): Unit
     fun ffi_rust_core_rust_future_complete_void(`handle`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    fun uniffi_rust_core_checksum_func_compress_data(
+    ): Short
+    fun uniffi_rust_core_checksum_func_decompress_data(
+    ): Short
     fun uniffi_rust_core_checksum_func_deserialize_chunk(
     ): Short
     fun uniffi_rust_core_checksum_func_import_identity_keys(
@@ -989,6 +1001,12 @@ private fun uniffiCheckContractApiVersion(lib: UniffiLib) {
 
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: UniffiLib) {
+    if (lib.uniffi_rust_core_checksum_func_compress_data() != 51222.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_rust_core_checksum_func_decompress_data() != 38.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_rust_core_checksum_func_deserialize_chunk() != 44138.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -2672,6 +2690,32 @@ public object FfiConverterSequenceTypeMeshChunk: FfiConverterRustBuffer<List<Mes
         }
     }
 }
+        /**
+         * Standalone LZ4 compression for raw byte buffers.
+         * Adds a 1-byte header: 0x01 = LZ4 Compressed, 0x00 = Uncompressed Raw.
+         */ fun `compressData`(`data`: kotlin.ByteArray): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    uniffiRustCall() { _status ->
+    UniffiLib.INSTANCE.uniffi_rust_core_fn_func_compress_data(
+        FfiConverterByteArray.lower(`data`),_status)
+}
+    )
+    }
+    
+
+        /**
+         * Standalone LZ4 decompression for raw byte buffers.
+         */
+    @Throws(CryptoException::class) fun `decompressData`(`data`: kotlin.ByteArray): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    uniffiRustCallWithError(CryptoException) { _status ->
+    UniffiLib.INSTANCE.uniffi_rust_core_fn_func_decompress_data(
+        FfiConverterByteArray.lower(`data`),_status)
+}
+    )
+    }
+    
+
     @Throws(ProtocolException::class) fun `deserializeChunk`(`data`: kotlin.ByteArray): MeshChunk {
             return FfiConverterTypeMeshChunk.lift(
     uniffiRustCallWithError(ProtocolException) { _status ->
