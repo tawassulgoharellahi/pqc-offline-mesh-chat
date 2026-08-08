@@ -35,53 +35,6 @@ Traditional mobile messaging applications depend on central servers and classica
 
 ---
 
-## Project Roadmap & Implementation Phases
-
-### Phase 1: Cryptographic Foundation [COMPLETED]
-- Rust core integration with ML-KEM-768 (Kyber), Dilithium-3, X25519, and AES-256-GCM.
-- UniFFI scaffolding for cross-language JNA/Kotlin bindings.
-
-### Phase 2: BLE & Wire Protocol [COMPLETED]
-- Custom GATT chunking SAR engine handling large PQC payloads over 250-byte MTU buffers.
-- Message header protocol tracking TTL, 16-byte message ID, destination MAC, and sender node ID.
-
-### Phase 3: Mesh Networking & Multi-Hop Discovery [COMPLETED]
-- Continuous BLE scanning (`BluetoothLeScanner`) and background advertising (`BluetoothLeAdvertiser`).
-- Automatic intermediate relay routing with duplicate message suppression.
-
-### Phase 4: App Integration & UI [COMPLETED]
-- React Native dark interface designed for offline mobile usage.
-- Single-scan 2D QR code identity key exchange workflow.
-- Disconnect button and dynamic handshake status indicators.
-
-### Phase 5: Store-and-Forward Outbox [COMPLETED]
-- Outbox store-and-forward queue for messages addressed to temporarily offline peers.
-- Debounced auto-flush (max once per 2 seconds) upon peer rediscovery.
-
-### Phase 6: Advanced BLE Stability & GATT Lifecycle [COMPLETED]
-- GATT lock with 10-second watchdog timeout.
-- Reflection-based `gatt.refresh()` execution on GATT status 133 retry loops.
-- BroadcastReceiver listening to `BluetoothAdapter.ACTION_STATE_CHANGED` for automatic BT ON/OFF recovery.
-
-### Phase 7: 24/7 Background Persistence & Foreground Service [COMPLETED]
-- Native `BLEMeshService` Android Foreground Service with `START_STICKY` flag.
-- Persistent status bar notification ("PQC Mesh Node Active") ensuring continuous background operation.
-
-### Phase 8: Encrypted Session & Peer Persistence [COMPLETED]
-- Persistent storage for identity keys, master secrets, and target MAC addresses in Android `SharedPreferences`.
-- Automatic session restoration on app launch without requiring QR re-scanning.
-
-### Phase 9: LZ4 Payload Compression [COMPLETED]
-- `lz4_flex` payload compression for data > 100 bytes, reducing BLE chunk counts by up to 60%.
-- Standalone `compress_data` and `decompress_data` UniFFI exports.
-
-### Phase 10: Security Hardening & Binary Wire Protocol [COMPLETED]
-- **Triple-Tap Emergency Panic Wipe**: Rapidly tapping the header title 3 times within 1.5 seconds triggers an emergency wipe that zeroizes identity keys, master secrets, mesh queues, and UI logs.
-- **ML-DSA Signatures**: Dilithium-3 signature generation (`sign_data`) and verification (`verify_signature`).
-- **Compact Binary Wire Envelope**: Compact fixed-header binary encoding (`[0x50, 0x51]` magic header) replacing JSON string envelope overhead.
-
----
-
 ## Repository Structure
 
 ```
@@ -153,20 +106,7 @@ The compiled APK will be located at:
 
 ---
 
-## Manual Verification & Testing Guide
-
-### Emergency Panic Wipe Test
-1. Tap **3 times** on the top header title **"PQC Offline Chat"** within 1.5 seconds.
-2. Confirm the prompt: `WIPE EVERYTHING`.
-3. Verify that all messages, keys, stored master secrets, and mesh state are zeroized instantly.
-
-### Session Auto-Restore Test
-1. Pair two devices by scanning the QR code once.
-2. Close the app completely on both devices via Recent Apps.
-3. Re-open the app — verify that the green lock banner (`🔒 Kyber-768 + AES-256 Encrypted Session Active`) restores automatically without re-scanning.
-
----
-
 ## License
 
 Distributed under the MIT License. See `LICENSE` for details.
+
