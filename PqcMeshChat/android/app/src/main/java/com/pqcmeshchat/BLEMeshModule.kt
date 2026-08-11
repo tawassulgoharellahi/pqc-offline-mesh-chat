@@ -19,6 +19,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import com.facebook.react.bridge.*
 import com.facebook.react.modules.core.DeviceEventManagerModule
+import org.json.JSONArray
 import org.json.JSONObject
 import uniffi.rust_core.*
 import java.util.UUID
@@ -70,7 +71,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             } catch (e: Exception) {
                 Log.w("BLEMeshModule", "Periodic outbox flush error: ${e.message}")
             }
-            mainHandler.postDelayed(this, 4000)
+            mainHandler.postDelayed(this, 2000)
         }
     }
 
@@ -124,7 +125,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         } catch (e: Exception) {
             Log.w("BLEMeshModule", "Error registering bluetoothStateReceiver: ${e.message}")
         }
-        mainHandler.postDelayed(outboxFlushRunnable, 4000)
+        mainHandler.postDelayed(outboxFlushRunnable, 2000)
     }
 
     private fun createNotificationChannel() {
@@ -206,6 +207,30 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             Log.w("BLEMeshModule", "Notification permission missing: ${e.message}")
         } catch (e: Exception) {
             Log.w("BLEMeshModule", "Notification post error: ${e.message}")
+        }
+    }
+
+    companion object {
+        const val PENDING_MSGS_PREFS = "pqc_pending_msgs_prefs"
+        const val PENDING_MSGS_KEY  = "pending_messages"
+    }
+
+    /** Append an encrypted payload to the pending-messages store in SharedPreferences. */
+    private fun persistPendingMessage(sender: String, payload: String) {
+        try {
+            val prefs = reactApplicationContext.getSharedPreferences(PENDING_MSGS_PREFS, Context.MODE_PRIVATE)
+            val existing = prefs.getString(PENDING_MSGS_KEY, "[]") ?: "[]"
+            val arr = JSONArray(existing)
+            val entry = JSONObject().apply {
+                put("sender", sender)
+                put("payload", payload)
+                put("timestamp", System.currentTimeMillis())
+            }
+            arr.put(entry)
+            prefs.edit().putString(PENDING_MSGS_KEY, arr.toString()).apply()
+            Log.i("BLEMeshModule", "Persisted pending message from $sender (total ${arr.length()})")
+        } catch (e: Exception) {
+            Log.w("BLEMeshModule", "Failed to persist pending message: ${e.message}")
         }
     }
 
@@ -359,6 +384,11 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                 map.putString("senderAddress", senderNode)
                                 map.putString("payload", payload)
                                 sendEvent("onMessageReceived", map)
+                                // If app is in the background, persist the message so it
+                                // is visible when the user opens the app via the notification.
+                                if (!isAppInForeground()) {
+                                    persistPendingMessage(senderNode, payload)
+                                }
                                 triggerMessageAudioNotification(senderNode)
                             } else if (ttl > 1) {
                                 val newTtl = ttl - 1

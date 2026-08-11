@@ -9,6 +9,7 @@ import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.Promise
 import uniffi.rust_core.*
 import android.util.Base64
+import org.json.JSONArray
 import org.json.JSONObject
 
 class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
@@ -243,6 +244,11 @@ class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             // Purge SharedPreferences completely
             prefs.edit().clear().apply()
 
+            // Also clear any background-persisted pending messages
+            reactApplicationContext.getSharedPreferences(
+                BLEMeshModule.PENDING_MSGS_PREFS, Context.MODE_PRIVATE
+            ).edit().clear().apply()
+
             // Generate fresh keys for clean restart
             val newKeys = IdentityKeys.generate()
             identityKeys = newKeys
@@ -254,6 +260,37 @@ class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             promise.resolve(newKeysJson)
         } catch (e: Exception) {
             promise.reject("WIPE_FAILED", e)
+        }
+    }
+
+    /**
+     * Returns all messages that arrived while the app was backgrounded and then
+     * clears the store atomically so they are never shown twice.
+     * Each element: { sender: String, payload: String, timestamp: Long }
+     */
+    @ReactMethod
+    fun getPendingMessages(promise: Promise) {
+        try {
+            val pendingPrefs = reactApplicationContext.getSharedPreferences(
+                BLEMeshModule.PENDING_MSGS_PREFS, Context.MODE_PRIVATE
+            )
+            val raw = pendingPrefs.getString(BLEMeshModule.PENDING_MSGS_KEY, "[]") ?: "[]"
+            // Clear immediately so messages are never double-shown
+            pendingPrefs.edit().remove(BLEMeshModule.PENDING_MSGS_KEY).apply()
+
+            val arr = JSONArray(raw)
+            val result = Arguments.createArray()
+            for (i in 0 until arr.length()) {
+                val obj = arr.getJSONObject(i)
+                val map = Arguments.createMap()
+                map.putString("sender", obj.optString("sender", ""))
+                map.putString("payload", obj.optString("payload", ""))
+                map.putDouble("timestamp", obj.optLong("timestamp", 0L).toDouble())
+                result.pushMap(map)
+            }
+            promise.resolve(result)
+        } catch (e: Exception) {
+            promise.resolve(Arguments.createArray())
         }
     }
 

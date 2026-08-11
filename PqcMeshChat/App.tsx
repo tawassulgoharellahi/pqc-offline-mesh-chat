@@ -180,6 +180,38 @@ export default function App() {
           setTargetDevice(sessionInfo.targetMac);
           updateHandshakeState(true);
           console.log("Restored active PQC session for peer:", sessionInfo.targetMac);
+
+          // Load messages that arrived while the app was closed.
+          // getPendingMessages() reads-then-clears atomically so they never show twice.
+          try {
+            const pending = await CryptoModule.getPendingMessages();
+            if (pending && pending.length > 0) {
+              const restored: Message[] = [];
+              for (const item of pending) {
+                try {
+                  let text = item.payload;
+                  try {
+                    text = await CryptoModule.decryptMessage(item.payload);
+                  } catch (_) {}
+                  const d = new Date(item.timestamp);
+                  const timeStr = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+                  restored.push({
+                    id: `pending_${item.timestamp}_${Math.random()}`,
+                    sender: item.sender || 'Peer',
+                    text,
+                    isMine: false,
+                    time: timeStr,
+                  });
+                } catch (_) {}
+              }
+              if (restored.length > 0) {
+                setMessages(prev => [...restored, ...prev]);
+                setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: false }), 120);
+              }
+            }
+          } catch (pendErr) {
+            console.warn("Pending messages load error:", pendErr);
+          }
         }
       } catch (sessErr) {
         console.warn("Session restore check:", sessErr);
