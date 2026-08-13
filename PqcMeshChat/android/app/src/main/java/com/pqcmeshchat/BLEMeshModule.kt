@@ -60,7 +60,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     private val seenMsgIds = mutableSetOf<String>()
     private val relayQueue = mutableListOf<RelayPacket>()
     private val storeAndForwardOutbox = mutableListOf<OutboxPacket>()
-    private val discoveredPeers = mutableMapOf<String, String>()
+    private val discoveredPeers = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     private val outboxFlushRunnable = object : Runnable {
         override fun run() {
@@ -92,23 +92,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                             bluetoothAdapter?.bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback)
                         } catch (e: Exception) {}
 
-                        val settings = AdvertiseSettings.Builder()
-                            .setAdvertiseMode(AdvertiseSettings.ADVERTISE_MODE_LOW_LATENCY)
-                            .setConnectable(true)
-                            .setTimeout(0)
-                            .setTxPowerLevel(AdvertiseSettings.ADVERTISE_TX_POWER_HIGH)
-                            .build()
-                        val data = AdvertiseData.Builder()
-                            .setIncludeDeviceName(true)
-                            .addServiceUuid(parcelUuid)
-                            .build()
-                        try {
-                            bluetoothAdapter?.bluetoothLeAdvertiser?.startAdvertising(settings, data, advertiseCallback)
-                        } catch (e: Exception) {
-                            Log.w("BLEMeshModule", "Error restarting advertiser: ${e.message}")
-                        }
-
-                        ensureGattServerOpen()
+                        startAdvertisingInternal()
                         startPeerDiscovery()
                         attemptForwardQueuedMessages()
                     }, 1500)
@@ -262,6 +246,24 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             .emit(eventName, params)
     }
 
+    override fun onCatalystInstanceDestroy() {
+        super.onCatalystInstanceDestroy()
+        Log.i("BLEMeshModule", "onCatalystInstanceDestroy: Cleaning up BLE resources...")
+        try {
+            reactApplicationContext.unregisterReceiver(bluetoothStateReceiver)
+        } catch (e: Exception) {}
+        try {
+            bluetoothAdapter?.bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback)
+        } catch (e: Exception) {}
+        try {
+            stopPeerDiscovery()
+        } catch (e: Exception) {}
+        try {
+            gattServer?.close()
+        } catch (e: Exception) {}
+        gattServer = null
+    }
+
     private fun getLocalNodeId(): String {
         try {
             val prefs = reactApplicationContext.getSharedPreferences("PQC_MESH_PREFS", Context.MODE_PRIVATE)
@@ -397,23 +399,39 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                         if (!masterKeyB64.isNullOrEmpty()) {
                                             val masterKeyBytes = android.util.Base64.decode(masterKeyB64, android.util.Base64.DEFAULT)
                                             val bgSession = ChatSession(masterKeyBytes)
-                                            val ackPlaintext = "ACK:$msgId"
-                                            val ackCiphertextBytes = bgSession.encryptMessage(ackPlaintext)
-                                            val ackCiphertextBase64 = android.util.Base64.encodeToString(ackCiphertextBytes, android.util.Base64.NO_WRAP)
                                             
-                                            Log.i("BLEMeshModule", "Queuing background ACK natively for msgId: $msgId")
-                                            val envelope = JSONObject().apply {
-                                                put("type", "MSG")
-                                                put("dest", senderNode)
-                                                put("sender", getLocalNodeId())
-                                                put("msgId", "ACK_$msgId")
-                                                put("ttl", 5)
-                                                put("payload", ackCiphertextBase64)
-                                            }.toString()
-                                            
-                                            mainHandler.postDelayed({
-                                                sendMessageToDeviceInternal(senderNode, envelope, null)
-                                            }, 3500)
+                                            // Decrypt payload to check if it's already an ACK
+                                            var isAck = false
+                                            try {
+                                                val payloadBytes = android.util.Base64.decode(payload, android.util.Base64.DEFAULT)
+                                                val plaintext = bgSession.decryptMessage(payloadBytes)
+                                                if (plaintext.startsWith("ACK:")) {
+                                                    isAck = true
+                                                    Log.i("BLEMeshModule", "Background received an ACK, dropping to prevent loops.")
+                                                }
+                                            } catch (e: Exception) {
+                                                // ignore and proceed to ACK
+                                            }
+
+                                            if (!isAck) {
+                                                val ackPlaintext = "ACK:$msgId"
+                                                val ackCiphertextBytes = bgSession.encryptMessage(ackPlaintext)
+                                                val ackCiphertextBase64 = android.util.Base64.encodeToString(ackCiphertextBytes, android.util.Base64.NO_WRAP)
+                                                
+                                                Log.i("BLEMeshModule", "Queuing background ACK natively for msgId: $msgId")
+                                                val envelope = JSONObject().apply {
+                                                    put("type", "MSG")
+                                                    put("dest", senderNode)
+                                                    put("sender", getLocalNodeId())
+                                                    put("msgId", "ACK_$msgId")
+                                                    put("ttl", 5)
+                                                    put("payload", ackCiphertextBase64)
+                                                }.toString()
+                                                
+                                                mainHandler.postDelayed({
+                                                    sendMessageToDeviceInternal(senderNode, envelope, null)
+                                                }, 3500)
+                                            }
                                         }
                                     } catch (e: Exception) {
                                         Log.e("BLEMeshModule", "Failed to queue background ACK", e)
@@ -465,14 +483,24 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
     @ReactMethod
     fun startAdvertising(promise: Promise) {
-        val advertiser = bluetoothAdapter?.bluetoothLeAdvertiser
-        if (advertiser == null) {
+        val result = startAdvertisingInternal()
+        if (result) {
+            promise.resolve("GATT Server & Advertising Started")
+        } else {
             promise.reject("BLE_UNAVAILABLE", "Bluetooth LE Advertiser not available")
-            return
         }
+    }
+
+    private fun startAdvertisingInternal(): Boolean {
+        val advertiser = bluetoothAdapter?.bluetoothLeAdvertiser ?: return false
 
         // 1. Start GATT Server
         ensureGattServerOpen()
+
+        // Stop advertising first if already advertising
+        try {
+            advertiser.stopAdvertising(advertiseCallback)
+        } catch (e: Exception) {}
 
         // 2. Start Advertising
         val settings = AdvertiseSettings.Builder()
@@ -488,7 +516,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             .build()
 
         advertiser.startAdvertising(settings, data, advertiseCallback)
-        promise.resolve("GATT Server & Advertising Started")
+        return true
     }
 
     @ReactMethod
@@ -499,16 +527,17 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             return
         }
 
-        val scanFilter = ScanFilter.Builder()
-            .setServiceUuid(parcelUuid)
-            .build()
+        try {
+            bleScanner?.stopScan(scanCallback)
+        } catch (e: Exception) {}
 
-        val scanSettings = ScanSettings.Builder()
+        val filters = listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build())
+        val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
 
         try {
-            bleScanner?.startScan(listOf(scanFilter), scanSettings, scanCallback)
+            bleScanner?.startScan(filters, settings, scanCallback)
             promise?.resolve("BLE Scan Started")
         } catch (e: Exception) {
             promise?.reject("SCAN_ERROR", e.message)
@@ -633,10 +662,13 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 // Only attempt packets whose destination is currently online
                 val onlinePeers = discoveredPeers.keys.toSet()
                 for (packet in outboxList) {
-                    val targetMac = if (isValidTargetMac(packet.dest) && onlinePeers.contains(packet.dest)) {
+                    var targetMac = if (isValidTargetMac(packet.dest) && onlinePeers.contains(packet.dest)) {
                         packet.dest
                     } else {
                         discoveredPeers.entries.firstOrNull { isPeerMatch(it.value, packet.dest) || isPeerMatch(it.key, packet.dest) }?.key
+                    }
+                    if (targetMac == null && isValidTargetMac(packet.dest)) {
+                        targetMac = packet.dest
                     }
 
                     if (targetMac != null && isValidTargetMac(targetMac)) {
@@ -704,18 +736,21 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
     @Volatile
     private var gattBusyStartTime = 0L
 
-    private val gattWatchdogRunnable = Runnable {
-        Log.w("BLEMeshModule", "GATT Watchdog timeout triggered! Force releasing lock.")
-        releaseGattLock()
-    }
+    private var activeGattClient: BluetoothGatt? = null
+    private var activeGattOnComplete: ((Boolean) -> Unit)? = null
+    private var currentWatchdogRunnable: Runnable? = null
 
     private fun releaseGattLock() {
-        mainHandler.removeCallbacks(gattWatchdogRunnable)
+        currentWatchdogRunnable?.let { mainHandler.removeCallbacks(it) }
+        currentWatchdogRunnable = null
         synchronized(this) {
             isGattBusy = false
             gattBusyStartTime = 0L
+            activeGattClient = null
+            activeGattOnComplete = null
         }
         mainHandler.postDelayed({
+            startPeerDiscovery()
             if (storeAndForwardOutbox.isNotEmpty()) {
                 attemptForwardQueuedMessages()
             }
@@ -756,8 +791,29 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
             }
             isGattBusy = true
             gattBusyStartTime = System.currentTimeMillis()
-            mainHandler.removeCallbacks(gattWatchdogRunnable)
-            mainHandler.postDelayed(gattWatchdogRunnable, 10000L)
+            currentWatchdogRunnable?.let { mainHandler.removeCallbacks(it) }
+            
+            currentWatchdogRunnable = Runnable {
+                Log.w("BLEMeshModule", "GATT Watchdog timeout triggered! Force releasing lock and closing active GATT.")
+                if (activeGattClient != null) {
+                    handleGattFailure(activeGattClient!!, message, deviceAddress, safePromise, onComplete)
+                } else {
+                    activeGattOnComplete?.invoke(false)
+                    activeGattClient = null
+                    activeGattOnComplete = null
+                    releaseGattLock()
+                    val fallbackOutbox = OutboxPacket(
+                        dest = deviceAddress,
+                        sender = getLocalNodeId(),
+                        msgId = UUID.randomUUID().toString(),
+                        ttl = 5,
+                        payload = message
+                    )
+                    queueStoreAndForwardPacket(fallbackOutbox)
+                    safePromise.resolve("QUEUED_IN_OUTBOX")
+                }
+            }
+            mainHandler.postDelayed(currentWatchdogRunnable!!, 10000L)
         }
 
         Thread {
@@ -933,7 +989,7 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
                                         targetMac = newTarget ?: oldMac
                                         Log.i("BLEMeshModule", "Retrying GATT connection (attempt $retryCount) to $targetMac...")
                                         val retryDevice = bluetoothAdapter?.getRemoteDevice(targetMac)
-                                        retryDevice?.connectGatt(reactApplicationContext, false, this, BluetoothDevice.TRANSPORT_LE)
+                                        activeGattClient = retryDevice?.connectGatt(reactApplicationContext, false, this, BluetoothDevice.TRANSPORT_LE)
                                     }, 2000)
                                 } else {
                                     val newTarget = discoveredPeers.entries.firstOrNull { isPeerMatch(it.value, deviceAddress) || isPeerMatch(it.key, deviceAddress) }?.key
@@ -941,11 +997,11 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
                                     targetMac = newTarget ?: oldMac
                                     Log.i("BLEMeshModule", "Retrying GATT connection (attempt $retryCount) to $targetMac...")
                                     val retryDevice = bluetoothAdapter?.getRemoteDevice(targetMac)
-                                    retryDevice?.connectGatt(reactApplicationContext, false, this, BluetoothDevice.TRANSPORT_LE)
+                                    activeGattClient = retryDevice?.connectGatt(reactApplicationContext, false, this, BluetoothDevice.TRANSPORT_LE)
                                 }
                             }, retryDelay)
                         } else {
-                            handleGattFailure(gatt, message, deviceAddress, safePromise)
+                            handleGattFailure(gatt, message, deviceAddress, safePromise, onComplete)
                         }
                         return
                     }
@@ -992,7 +1048,7 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
                         }
                     } else {
                         Log.e("BLEMeshModule", "Service discovery failed with status $status")
-                        handleGattFailure(gatt, message, deviceAddress, safePromise)
+                        handleGattFailure(gatt, message, deviceAddress, safePromise, onComplete)
                     }
                 }
                 
@@ -1005,7 +1061,7 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
                         }, 25)
                     } else {
                         Log.e("BLEMeshModule", "Failed to write chunk $currentChunkIndex, status=$status")
-                        handleGattFailure(gatt, message, deviceAddress, safePromise)
+                        handleGattFailure(gatt, message, deviceAddress, safePromise, onComplete)
                     }
                 }
                 
@@ -1021,11 +1077,11 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
                             val success = gatt.writeCharacteristic(characteristic)
                             Log.i("BLEMeshModule", "Writing chunk $currentChunkIndex/${chunks.size} (success=$success)...")
                             if (!success) {
-                                handleGattFailure(gatt, message, deviceAddress, safePromise)
+                                handleGattFailure(gatt, message, deviceAddress, safePromise, onComplete)
                             }
                         } else {
                             Log.e("BLEMeshModule", "Target GATT Service or Characteristic not found on device!")
-                            handleGattFailure(gatt, message, deviceAddress, safePromise)
+                            handleGattFailure(gatt, message, deviceAddress, safePromise, onComplete)
                         }
                     } else {
                         Log.i("BLEMeshModule", "All ${chunks.size} chunks sent successfully!")
@@ -1055,8 +1111,9 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
             }
             
             Log.i("BLEMeshModule", "Connecting GATT to device $targetMac via TRANSPORT_LE...")
+            activeGattOnComplete = onComplete
             mainHandler.postDelayed({
-                device.connectGatt(reactApplicationContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+                activeGattClient = device.connectGatt(reactApplicationContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
             }, 300)
         }.start()
     }
@@ -1121,6 +1178,15 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
             val name = if (serviceData != null) String(serviceData, Charsets.UTF_8) else device.name ?: "PQC Node (${address.takeLast(5)})"
 
             val isNew = !discoveredPeers.containsKey(address)
+            
+            if (name.startsWith("NODE_")) {
+                val staleMacs = discoveredPeers.filterValues { it == name }.keys.filter { it != address }
+                for (stale in staleMacs) {
+                    discoveredPeers.remove(stale)
+                    Log.i("BLEMeshModule", "Removed stale MAC $stale for node $name")
+                }
+            }
+            
             discoveredPeers[address] = name
             if (isNew) {
                 val map = Arguments.createMap()
@@ -1155,7 +1221,7 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
             discoveredPeers.clear()
             
             // Release the GATT lock forcefully
-            mainHandler.removeCallbacks(gattWatchdogRunnable)
+            currentWatchdogRunnable?.let { mainHandler.removeCallbacks(it) }
             synchronized(this) {
                 isGattBusy = false
                 gattBusyStartTime = 0L
