@@ -382,38 +382,45 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                             Log.i("BLEMeshModule", "Message received on GATT Server. isForMe=$isForMe, dest=$dest, myMac=$myMac")
 
                             if (isForMe) {
+                                // First check if it's an ACK to avoid playing sounds or persisting it
+                                var isAck = false
+                                try {
+                                    val prefs = reactApplicationContext.getSharedPreferences("pqc_crypto_prefs", Context.MODE_PRIVATE)
+                                    val masterKeyB64 = prefs.getString("session_master_key", null)
+                                    if (!masterKeyB64.isNullOrEmpty()) {
+                                        val masterKeyBytes = android.util.Base64.decode(masterKeyB64, android.util.Base64.DEFAULT)
+                                        val bgSession = ChatSession(masterKeyBytes)
+                                        val payloadBytes = android.util.Base64.decode(payload, android.util.Base64.DEFAULT)
+                                        val plaintext = bgSession.decryptMessage(payloadBytes)
+                                        if (plaintext.startsWith("ACK:")) {
+                                            isAck = true
+                                            Log.i("BLEMeshModule", "Received an ACK, dropping background notifications/persistence.")
+                                        }
+                                    }
+                                } catch (e: Exception) {
+                                    // Not an ACK or decryption failed, ignore
+                                }
+
                                 val map = Arguments.createMap()
                                 map.putString("senderAddress", senderNode)
                                 map.putString("payload", payload)
                                 map.putString("msgId", msgId)
                                 sendEvent("onMessageReceived", map)
+                                
                                 // If app is in the background, persist the message so it
                                 // is visible when the user opens the app via the notification.
                                 if (!isAppInForeground()) {
-                                    persistPendingMessage(senderNode, payload)
-                                    
-                                    // Also send ACK back since JS won't process it when swiped away
-                                    try {
-                                        val prefs = reactApplicationContext.getSharedPreferences("pqc_crypto_prefs", Context.MODE_PRIVATE)
-                                        val masterKeyB64 = prefs.getString("session_master_key", null)
-                                        if (!masterKeyB64.isNullOrEmpty()) {
-                                            val masterKeyBytes = android.util.Base64.decode(masterKeyB64, android.util.Base64.DEFAULT)
-                                            val bgSession = ChatSession(masterKeyBytes)
-                                            
-                                            // Decrypt payload to check if it's already an ACK
-                                            var isAck = false
-                                            try {
-                                                val payloadBytes = android.util.Base64.decode(payload, android.util.Base64.DEFAULT)
-                                                val plaintext = bgSession.decryptMessage(payloadBytes)
-                                                if (plaintext.startsWith("ACK:")) {
-                                                    isAck = true
-                                                    Log.i("BLEMeshModule", "Background received an ACK, dropping to prevent loops.")
-                                                }
-                                            } catch (e: Exception) {
-                                                // ignore and proceed to ACK
-                                            }
-
-                                            if (!isAck) {
+                                    if (!isAck) {
+                                        persistPendingMessage(senderNode, payload)
+                                        
+                                        // Also send ACK back since JS won't process it when swiped away
+                                        try {
+                                            val prefs = reactApplicationContext.getSharedPreferences("pqc_crypto_prefs", Context.MODE_PRIVATE)
+                                            val masterKeyB64 = prefs.getString("session_master_key", null)
+                                            if (!masterKeyB64.isNullOrEmpty()) {
+                                                val masterKeyBytes = android.util.Base64.decode(masterKeyB64, android.util.Base64.DEFAULT)
+                                                val bgSession = ChatSession(masterKeyBytes)
+                                                
                                                 val ackPlaintext = "ACK:$msgId"
                                                 val ackCiphertextBytes = bgSession.encryptMessage(ackPlaintext)
                                                 val ackCiphertextBase64 = android.util.Base64.encodeToString(ackCiphertextBytes, android.util.Base64.NO_WRAP)
@@ -430,14 +437,17 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                                 
                                                 mainHandler.postDelayed({
                                                     sendMessageToDeviceInternal(senderNode, envelope, null)
-                                                }, 3500)
+                                                }, 1750)
                                             }
+                                        } catch (e: Exception) {
+                                            Log.e("BLEMeshModule", "Failed to queue background ACK", e)
                                         }
-                                    } catch (e: Exception) {
-                                        Log.e("BLEMeshModule", "Failed to queue background ACK", e)
                                     }
                                 }
-                                triggerMessageAudioNotification(senderNode)
+                                
+                                if (!isAck) {
+                                    triggerMessageAudioNotification(senderNode)
+                                }
                             } else if (ttl > 1) {
                                 val newTtl = ttl - 1
                                 val packet = RelayPacket(dest, senderNode, msgId, newTtl, payload)

@@ -266,11 +266,11 @@ export default function App() {
                 const ackCiphertext = await CryptoModule.encryptMessage(ackPlaintext);
                 const localMac = await BLEMeshModule.getMacAddress();
                 
-                // Wait 3.5 seconds before sending the ACK to ensure the sender 
-                // has fully disconnected and resumed advertising.
+                // Wait 1.75 seconds before sending the ACK to ensure the sender 
+                // is ready to receive and not busy sending more chunks.
                 setTimeout(() => {
                     BLEMeshModule.sendMessageToDevice(senderAddress || targetDevice, ackCiphertext, localMac, `ACK_${msgId}`);
-                }, 3500);
+                }, 1750);
             } catch (ackErr) {
                 console.warn("Failed to queue ACK:", ackErr);
             }
@@ -574,7 +574,7 @@ export default function App() {
                     <Text style={msg.isMine ? styles.myTimeText : styles.theirTimeText}>{msg.time}</Text>
                     {msg.isMine && (
                       <Text style={msg.status === 'queued' ? styles.queuedStatusText : styles.lockIcon}>
-                        {msg.status === 'queued' ? ' ⌛' : msg.status === 'transmitted' ? ' ✓' : ' ✓✓ 🔒'}
+                        {msg.status === 'queued' ? ' ⌛' : msg.status === 'transmitted' ? ' ✓' : <Text><Text style={{letterSpacing: -2}}> ✓✓</Text> 🔒</Text>}
                       </Text>
                     )}
                   </View>
