@@ -239,21 +239,48 @@ export default function App() {
     initKeysAndAdvertising();
 
     const recvSub = bleEmitter?.addListener('onMessageReceived', async (event) => {
-      const { senderAddress, payload } = event;
+      const { senderAddress, payload, msgId } = event;
       
       try {
         let displayPayload = payload;
+        let wasDecrypted = false;
         try {
           displayPayload = await CryptoModule.decryptMessage(payload);
+          wasDecrypted = true;
         } catch (decErr) {
           console.warn("PQC Decrypt fallback:", decErr);
+        }
+
+        if (wasDecrypted && displayPayload.startsWith("ACK:")) {
+            const ackedMsgId = displayPayload.substring(4);
+            console.log("🟢 [UI] Received ACK for msgId:", ackedMsgId);
+            await BLEMeshModule.deleteOutboxMessage(ackedMsgId);
+            setMessages(prev => prev.map(msg => msg.id === ackedMsgId ? { ...msg, status: 'acked' } : msg));
+            return;
+        }
+
+        if (wasDecrypted && msgId) {
+            try {
+                console.log("🔵 [UI] Queuing ACK for msgId:", msgId);
+                const ackPlaintext = "ACK:" + msgId;
+                const ackCiphertext = await CryptoModule.encryptMessage(ackPlaintext);
+                const localMac = await BLEMeshModule.getMacAddress();
+                
+                // Wait 3.5 seconds before sending the ACK to ensure the sender 
+                // has fully disconnected and resumed advertising.
+                setTimeout(() => {
+                    BLEMeshModule.sendMessageToDevice(senderAddress || targetDevice, ackCiphertext, localMac, `ACK_${msgId}`);
+                }, 3500);
+            } catch (ackErr) {
+                console.warn("Failed to queue ACK:", ackErr);
+            }
         }
 
         const now = new Date();
         const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
         
         setMessages(prev => [...prev, {
-          id: Math.random().toString(),
+          id: msgId || Math.random().toString(),
           sender: senderAddress || 'Peer',
           text: displayPayload,
           isMine: false,
@@ -289,15 +316,23 @@ export default function App() {
       setRelayedCount(prev => prev + 1);
     });
 
+    const transmittedSub = bleEmitter?.addListener('onMessageTransmitted', (event) => {
+      const { msgId } = event;
+      if (msgId) {
+        setMessages(prev => prev.map(msg => (msg.id === msgId && msg.status === 'queued') ? { ...msg, status: 'transmitted' } : msg));
+      }
+    });
+
     const deliveredSub = bleEmitter?.addListener('onMessageDelivered', (event) => {
       const { msgId } = event;
       if (msgId) {
-        setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, status: 'sent' } : msg));
+        setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, status: 'transmitted' } : msg));
       }
     });
     
     return () => {
       recvSub?.remove();
+      transmittedSub?.remove();
       handshakeSub?.remove();
       peerSub?.remove();
       relaySub?.remove();
@@ -377,7 +412,7 @@ export default function App() {
       const ciphertextBase64 = await CryptoModule.encryptMessage(textToSend);
       const res = await BLEMeshModule.sendMessageToDevice(targetDevice, ciphertextBase64, myMac, msgId);
       if (res === 'DELIVERED') {
-        setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, status: 'sent' } : msg));
+        setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, status: 'transmitted' } : msg));
       }
     } catch (e: any) {
       console.warn("Background transmission notice:", e.message);
@@ -539,7 +574,7 @@ export default function App() {
                     <Text style={msg.isMine ? styles.myTimeText : styles.theirTimeText}>{msg.time}</Text>
                     {msg.isMine && (
                       <Text style={msg.status === 'queued' ? styles.queuedStatusText : styles.lockIcon}>
-                        {msg.status === 'queued' ? ' ⌛ Outbox' : ' ✓ 🔒'}
+                        {msg.status === 'queued' ? ' ⌛' : msg.status === 'transmitted' ? ' ✓' : ' ✓✓ 🔒'}
                       </Text>
                     )}
                   </View>
@@ -707,7 +742,14 @@ export default function App() {
                   if (data.k) {
                     const keysJsonString = typeof data.k === 'string' ? data.k : JSON.stringify(data.k);
                     setTheirKeys(keysJsonString);
-                    await performHandshakeWithKeys(keysJsonString);
+                    await performHandshakeWithKeys(keysJsonString, resolvedMac);
+                    
+                    try {
+                      const localMac = await BLEMeshModule.getMacAddress();
+                      await BLEMeshModule.requestPqcKeysOverBle(resolvedMac, localMac);
+                    } catch (e) {
+                      console.warn("Error requesting keys back:", e);
+                    }
                   }
 
                   try {

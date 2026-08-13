@@ -262,19 +262,23 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             .emit(eventName, params)
     }
 
+    private fun getLocalNodeId(): String {
+        try {
+            val prefs = reactApplicationContext.getSharedPreferences("PQC_MESH_PREFS", Context.MODE_PRIVATE)
+            var nodeId = prefs.getString("NODE_ID", null)
+            if (nodeId == null) {
+                nodeId = "NODE_" + UUID.randomUUID().toString().replace("-", "").take(8).uppercase()
+                prefs.edit().putString("NODE_ID", nodeId).apply()
+            }
+            return nodeId
+        } catch (e: Exception) {
+            return "NODE_DEVICE"
+        }
+    }
+
     @ReactMethod
     fun getMacAddress(promise: Promise) {
-        try {
-            val mac = bluetoothAdapter?.address
-            if (isValidTargetMac(mac)) {
-                promise.resolve(mac)
-            } else {
-                val nodeId = "NODE_" + (android.os.Build.MODEL.replace(" ", "") + "_" + android.os.Build.BOARD).take(12)
-                promise.resolve(nodeId)
-            }
-        } catch (e: Exception) {
-            promise.resolve("NODE_DEVICE")
-        }
+        promise.resolve(getLocalNodeId())
     }
 
     @ReactMethod
@@ -351,7 +355,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                             if (myKeys.isNotEmpty()) {
                                 val keyRespJson = JSONObject().apply {
                                     put("type", "KEY_RESP")
-                                    put("sender", bluetoothAdapter?.address ?: "02:00:00:00:00:00")
+                                    put("sender", getLocalNodeId())
                                     put("keys", myKeys)
                                 }.toString()
                                 mainHandler.postDelayed({
@@ -365,17 +369,13 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                             map.putString("keys", keysData)
                             sendEvent("onHandshakeKeysReceived", map)
                         } else {
-                            if (seenMsgIds.contains(msgId)) {
+            if (seenMsgIds.contains(msgId)) {
                                 return
                             }
                             seenMsgIds.add(msgId)
 
-                            val myMac = bluetoothAdapter?.address ?: "02:00:00:00:00:00"
-                            val isForMe = dest.isEmpty() || 
-                                          dest.equals(myMac, ignoreCase = true) || 
-                                          myMac == "02:00:00:00:00:00" || 
-                                          myMac.startsWith("NODE_") || 
-                                          dest.startsWith("NODE_")
+                            val myMac = getLocalNodeId()
+                            val isForMe = dest.isEmpty() || dest.equals(myMac, ignoreCase = true)
 
                             Log.i("BLEMeshModule", "Message received on GATT Server. isForMe=$isForMe, dest=$dest, myMac=$myMac")
 
@@ -383,11 +383,41 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                                 val map = Arguments.createMap()
                                 map.putString("senderAddress", senderNode)
                                 map.putString("payload", payload)
+                                map.putString("msgId", msgId)
                                 sendEvent("onMessageReceived", map)
                                 // If app is in the background, persist the message so it
                                 // is visible when the user opens the app via the notification.
                                 if (!isAppInForeground()) {
                                     persistPendingMessage(senderNode, payload)
+                                    
+                                    // Also send ACK back since JS won't process it when swiped away
+                                    try {
+                                        val prefs = reactApplicationContext.getSharedPreferences("pqc_crypto_prefs", Context.MODE_PRIVATE)
+                                        val masterKeyB64 = prefs.getString("session_master_key", null)
+                                        if (!masterKeyB64.isNullOrEmpty()) {
+                                            val masterKeyBytes = android.util.Base64.decode(masterKeyB64, android.util.Base64.DEFAULT)
+                                            val bgSession = ChatSession(masterKeyBytes)
+                                            val ackPlaintext = "ACK:$msgId"
+                                            val ackCiphertextBytes = bgSession.encryptMessage(ackPlaintext)
+                                            val ackCiphertextBase64 = android.util.Base64.encodeToString(ackCiphertextBytes, android.util.Base64.NO_WRAP)
+                                            
+                                            Log.i("BLEMeshModule", "Queuing background ACK natively for msgId: $msgId")
+                                            val envelope = JSONObject().apply {
+                                                put("type", "MSG")
+                                                put("dest", senderNode)
+                                                put("sender", getLocalNodeId())
+                                                put("msgId", "ACK_$msgId")
+                                                put("ttl", 5)
+                                                put("payload", ackCiphertextBase64)
+                                            }.toString()
+                                            
+                                            mainHandler.postDelayed({
+                                                sendMessageToDeviceInternal(senderNode, envelope, null)
+                                            }, 3500)
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.e("BLEMeshModule", "Failed to queue background ACK", e)
+                                    }
                                 }
                                 triggerMessageAudioNotification(senderNode)
                             } else if (ttl > 1) {
@@ -452,8 +482,9 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             .build()
 
         val data = AdvertiseData.Builder()
-            .setIncludeDeviceName(true)
+            .setIncludeDeviceName(false)
             .addServiceUuid(parcelUuid)
+            .addServiceData(parcelUuid, getLocalNodeId().toByteArray(Charsets.UTF_8))
             .build()
 
         advertiser.startAdvertising(settings, data, advertiseCallback)
@@ -494,7 +525,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         val myKeys = CryptoModule.identityKeys?.exportPublicKeysBase64() ?: ""
         val reqJson = JSONObject().apply {
             put("type", "KEY_REQ")
-            put("sender", if (senderMacAddress.isNotEmpty()) senderMacAddress else (bluetoothAdapter?.address ?: "02:00:00:00:00:00"))
+            put("sender", if (senderMacAddress.isNotEmpty()) senderMacAddress else getLocalNodeId())
             put("keys", myKeys)
         }.toString()
         sendMessageToDeviceInternal(deviceAddress, reqJson, promise)
@@ -565,14 +596,18 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                         ?: discoveredPeers.keys.firstOrNull { isValidTargetMac(it) }
                     }
                     if (targetMac != null && isValidTargetMac(targetMac)) {
-                        val envelope = JSONObject().apply {
-                            put("type", "MSG")
-                            put("dest", packet.dest)
-                            put("sender", packet.sender)
-                            put("msgId", packet.msgId)
-                            put("ttl", packet.ttl)
-                            put("payload", packet.payload)
-                        }.toString()
+                        val envelope = if (packet.payload.startsWith("{") && packet.payload.contains("\"type\"")) {
+                            packet.payload
+                        } else {
+                            JSONObject().apply {
+                                put("type", "MSG")
+                                put("dest", packet.dest)
+                                put("sender", packet.sender)
+                                put("msgId", packet.msgId)
+                                put("ttl", packet.ttl)
+                                put("payload", packet.payload)
+                            }.toString()
+                        }
 
                         val latch = java.util.concurrent.CountDownLatch(1)
                         sendMessageToDeviceInternal(targetMac, envelope, null) { isDelivered ->
@@ -736,7 +771,6 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
                 deviceAddress
             } else {
                 discoveredPeers.entries.firstOrNull { isPeerMatch(it.value, deviceAddress) || isPeerMatch(it.key, deviceAddress) }?.key
-                ?: discoveredPeers.keys.firstOrNull { isValidTargetMac(it) }
             }
 
             if (targetMac == null || !isValidTargetMac(targetMac)) {
@@ -765,11 +799,14 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
                         val quickCallback = object : ScanCallback() {
                             override fun onScanResult(callbackType: Int, result: ScanResult) {
                                 val addr = result.device.address
-                                val name = result.device.name ?: ""
+                                val serviceData = result.scanRecord?.getServiceData(parcelUuid)
+                                val name = if (serviceData != null) String(serviceData, Charsets.UTF_8) else result.device.name ?: ""
                                 if (isValidTargetMac(addr)) {
                                     discoveredPeers[addr] = if (name.isNotEmpty()) name else "PQC Node (${addr.takeLast(5)})"
-                                    targetMac = addr
-                                    latch.countDown()
+                                    if (isPeerMatch(name, deviceAddress) || (isValidTargetMac(deviceAddress) && deviceAddress.equals(addr, ignoreCase = true))) {
+                                        targetMac = addr
+                                        latch.countDown()
+                                    }
                                 }
                             }
                         }
@@ -917,15 +954,19 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
                         Log.i("BLEMeshModule", "Connected to GATT server $targetMac")
                         val mtuReq = gatt.requestMtu(512)
                         if (!mtuReq) {
-                            Log.i("BLEMeshModule", "requestMtu failed, discovering services immediately...")
-                            gatt.discoverServices()
+                            Log.w("BLEMeshModule", "requestMtu failed, discovering services immediately")
+                            if (!servicesDiscovered) {
+                                servicesDiscovered = true
+                                gatt.discoverServices()
+                            }
                         } else {
                             mainHandler.postDelayed({
                                 if (!servicesDiscovered) {
-                                    Log.i("BLEMeshModule", "MTU timeout fallback, discovering services...")
+                                    Log.w("BLEMeshModule", "MTU callback timeout, discovering services anyway")
+                                    servicesDiscovered = true
                                     gatt.discoverServices()
                                 }
-                            }, 300)
+                            }, 1500)
                         }
                     } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                         Log.i("BLEMeshModule", "Disconnected from GATT server $targetMac")
@@ -1005,7 +1046,9 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
                             try { gatt.disconnect() } catch (e: Exception) {}
                             try { gatt.close() } catch (e: Exception) {}
                             releaseGattLock()
-                            onComplete?.invoke(true)
+                            mainHandler.postDelayed({
+                                onComplete?.invoke(true)
+                            }, 1500)
                         }, 500)
                     }
                 }
@@ -1024,7 +1067,7 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
             if (json.optString("type") == "MSG") {
                 val outbox = OutboxPacket(
                     dest = json.optString("dest", deviceAddress),
-                    sender = json.optString("sender", "02:00:00:00:00:00"),
+                    sender = json.optString("sender", getLocalNodeId()),
                     msgId = json.optString("msgId", UUID.randomUUID().toString()),
                     ttl = json.optInt("ttl", 5),
                     payload = json.optString("payload", "")
@@ -1037,7 +1080,7 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
         } catch (e: Exception) {
             val fallbackOutbox = OutboxPacket(
                 dest = deviceAddress,
-                sender = "02:00:00:00:00:00",
+                sender = getLocalNodeId(),
                 msgId = UUID.randomUUID().toString(),
                 ttl = 5,
                 payload = message
@@ -1045,10 +1088,14 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
             queueStoreAndForwardPacket(fallbackOutbox)
             safePromise.resolve("QUEUED_IN_OUTBOX")
         }
-        try { gatt.disconnect() } catch (e: Exception) {}
-        try { gatt.close() } catch (e: Exception) {}
-        releaseGattLock()
-        onComplete?.invoke(false)
+        mainHandler.postDelayed({
+            try { gatt.disconnect() } catch (e: Exception) {}
+            try { gatt.close() } catch (e: Exception) {}
+            releaseGattLock()
+            mainHandler.postDelayed({
+                onComplete?.invoke(false)
+            }, 1500)
+        }, 500)
     }
 
     @ReactMethod
@@ -1056,7 +1103,7 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
         val envelope = JSONObject().apply {
             put("type", "MSG")
             put("dest", deviceAddress)
-            put("sender", if (senderMacAddress.isNotEmpty()) senderMacAddress else (bluetoothAdapter?.address ?: "02:00:00:00:00:00"))
+            put("sender", if (senderMacAddress.isNotEmpty()) senderMacAddress else getLocalNodeId())
             put("msgId", if (!customMsgId.isNullOrEmpty()) customMsgId else UUID.randomUUID().toString())
             put("ttl", 5)
             put("payload", message)
@@ -1070,7 +1117,8 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
             super.onScanResult(callbackType, result)
             val device = result.device
             val address = device.address
-            val name = device.name ?: "PQC Node (${address.takeLast(5)})"
+            val serviceData = result.scanRecord?.getServiceData(parcelUuid)
+            val name = if (serviceData != null) String(serviceData, Charsets.UTF_8) else device.name ?: "PQC Node (${address.takeLast(5)})"
 
             val isNew = !discoveredPeers.containsKey(address)
             discoveredPeers[address] = name
@@ -1105,7 +1153,15 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
             relayQueue.clear()
             synchronized(storeAndForwardOutbox) { storeAndForwardOutbox.clear() }
             discoveredPeers.clear()
-            Log.i("BLEMeshModule", "BLE Mesh cache, outbox, and discovered peers cleared")
+            
+            // Release the GATT lock forcefully
+            mainHandler.removeCallbacks(gattWatchdogRunnable)
+            synchronized(this) {
+                isGattBusy = false
+                gattBusyStartTime = 0L
+            }
+            
+            Log.i("BLEMeshModule", "BLE Mesh cache, GATT lock, outbox, and discovered peers cleared")
             promise.resolve("Mesh state reset successfully")
         } catch (e: Exception) {
             promise.reject("RESET_FAILED", e)
@@ -1122,5 +1178,12 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
             super.onStartFailure(errorCode)
             Log.e("BLEMeshModule", "Advertising onStartFailure: $errorCode")
         }
+    }
+    @ReactMethod
+    fun deleteOutboxMessage(msgId: String, promise: Promise) {
+        synchronized(storeAndForwardOutbox) {
+            storeAndForwardOutbox.removeAll { it.msgId == msgId }
+        }
+        promise.resolve("DELETED")
     }
 }
