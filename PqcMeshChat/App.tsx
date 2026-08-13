@@ -574,7 +574,7 @@ export default function App() {
                     <Text style={msg.isMine ? styles.myTimeText : styles.theirTimeText}>{msg.time}</Text>
                     {msg.isMine && (
                       <Text style={msg.status === 'queued' ? styles.queuedStatusText : styles.lockIcon}>
-                        {msg.status === 'queued' ? ' ⌛' : msg.status === 'transmitted' ? ' ✓' : <Text><Text style={{letterSpacing: -2}}> ✓✓</Text> 🔒</Text>}
+                        {msg.status === 'queued' ? ' ⌛' : msg.status === 'transmitted' ? ' ✓' : <Text style={{marginLeft: 4, letterSpacing: -2}}>✓✓</Text>}
                       </Text>
                     )}
                   </View>
