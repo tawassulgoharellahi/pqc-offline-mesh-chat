@@ -976,8 +976,17 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
                                     val scanCb = object : ScanCallback() {
                                         override fun onScanResult(callbackType: Int, result: ScanResult) {
                                             val mac = result.device.address
-                                            val name = result.device.name ?: result.scanRecord?.deviceName
-                                            discoveredPeers[mac] = name ?: "Unknown"
+                                            val serviceData = result.scanRecord?.getServiceData(parcelUuid)
+                                            val name = if (serviceData != null) String(serviceData, Charsets.UTF_8) else result.device.name ?: result.scanRecord?.deviceName ?: ""
+                                            if (name.isNotEmpty()) {
+                                                discoveredPeers[mac] = name
+                                                if (name.startsWith("NODE_")) {
+                                                    val staleMacs = discoveredPeers.filterValues { it == name }.keys.filter { it != mac }
+                                                    for (stale in staleMacs) {
+                                                        discoveredPeers.remove(stale)
+                                                    }
+                                                }
+                                            }
                                             if (isPeerMatch(name, deviceAddress) || isPeerMatch(mac, deviceAddress)) {
                                                 foundNewMac = mac
                                             }
@@ -1129,6 +1138,9 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
     }
 
     private fun handleGattFailure(gatt: BluetoothGatt, message: String, deviceAddress: String, safePromise: SafePromise, onComplete: ((Boolean) -> Unit)? = null) {
+        // Evict failed/stale MAC address from cache
+        discoveredPeers.remove(deviceAddress)
+        Log.i("BLEMeshModule", "Evicted failed/stale MAC $deviceAddress from discoveredPeers cache")
         try {
             val json = JSONObject(message)
             if (json.optString("type") == "MSG") {
@@ -1230,14 +1242,36 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
             synchronized(storeAndForwardOutbox) { storeAndForwardOutbox.clear() }
             discoveredPeers.clear()
             
-            // Release the GATT lock forcefully
+            // Release the GATT lock forcefully and disconnect active client
             currentWatchdogRunnable?.let { mainHandler.removeCallbacks(it) }
+            activeGattClient?.let { gatt ->
+                try {
+                    gatt.disconnect()
+                    gatt.close()
+                } catch (e: Exception) {}
+            }
+            activeGattClient = null
+
             synchronized(this) {
                 isGattBusy = false
                 gattBusyStartTime = 0L
             }
+
+            // Dismiss all system notifications
+            try {
+                val notificationManager = reactApplicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                notificationManager?.cancelAll()
+            } catch (e: Exception) {}
+
+            // Restart advertising with clean state and new Node ID
+            try {
+                bluetoothAdapter?.bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback)
+                mainHandler.postDelayed({
+                    try { startAdvertisingInternal() } catch (e: Exception) {}
+                }, 300)
+            } catch (e: Exception) {}
             
-            Log.i("BLEMeshModule", "BLE Mesh cache, GATT lock, outbox, and discovered peers cleared")
+            Log.i("BLEMeshModule", "BLE Mesh cache, active GATT links, outbox, and discovered peers cleared")
             promise.resolve("Mesh state reset successfully")
         } catch (e: Exception) {
             promise.reject("RESET_FAILED", e)

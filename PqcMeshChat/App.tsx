@@ -445,13 +445,22 @@ export default function App() {
               try {
                 updateHandshakeState(false);
                 setTargetDevice('');
+                setTheirKeys('');
+                setInputText('');
                 setMessages([]);
                 setDiscoveredPeers([]);
+                setShowMyQrModal(false);
+                setShowPeersModal(false);
+                setIsScanning(false);
+                
                 const newKeysJson = await CryptoModule.emergencyWipe();
                 await BLEMeshModule.resetMeshState();
+                
+                const freshMac = await BLEMeshModule.getMacAddress();
+                setMyMac(freshMac);
                 if (newKeysJson) {
                   setMyKeys(newKeysJson);
-                  setQrPayload(JSON.stringify({ m: myMac, k: newKeysJson }));
+                  setQrPayload(JSON.stringify({ m: freshMac, k: newKeysJson }));
                 }
                 Alert.alert("Emergency Wipe Completed", "All keys, session secrets, and message logs zeroized.");
               } catch (e: any) {

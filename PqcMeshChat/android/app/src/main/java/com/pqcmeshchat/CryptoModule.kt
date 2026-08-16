@@ -237,26 +237,63 @@ class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
     @ReactMethod
     fun emergencyWipe(promise: Promise) {
         try {
-            // Zeroize in-memory keys
+            // 1. Explicitly destroy/zeroize native Rust memory structs
+            try {
+                chatSession?.destroy()
+            } catch (e: Exception) {}
             chatSession = null
+
+            try {
+                identityKeys?.destroy()
+            } catch (e: Exception) {}
             identityKeys = null
 
-            // Purge SharedPreferences completely
-            prefs.edit().clear().apply()
+            // 2. Purge all SharedPreferences files completely
+            try {
+                prefs.edit().clear().commit()
+                reactApplicationContext.getSharedPreferences(
+                    BLEMeshModule.PENDING_MSGS_PREFS, Context.MODE_PRIVATE
+                ).edit().clear().commit()
+                reactApplicationContext.getSharedPreferences(
+                    "PQC_MESH_PREFS", Context.MODE_PRIVATE
+                ).edit().clear().commit()
 
-            // Also clear any background-persisted pending messages
-            reactApplicationContext.getSharedPreferences(
-                BLEMeshModule.PENDING_MSGS_PREFS, Context.MODE_PRIVATE
-            ).edit().clear().apply()
+                val prefsDir = java.io.File(reactApplicationContext.applicationInfo.dataDir, "shared_prefs")
+                if (prefsDir.exists() && prefsDir.isDirectory) {
+                    prefsDir.listFiles()?.forEach { file ->
+                        try { file.delete() } catch (e: Exception) {}
+                    }
+                }
+            } catch (e: Exception) {}
 
-            // Generate fresh keys for clean restart
+            // 3. Clear all disk and cache directories
+            try {
+                reactApplicationContext.cacheDir?.deleteRecursively()
+                reactApplicationContext.codeCacheDir?.deleteRecursively()
+                reactApplicationContext.externalCacheDir?.deleteRecursively()
+            } catch (e: Exception) {}
+
+            // 4. Dismiss all active Android system notifications immediately
+            try {
+                val notificationManager = reactApplicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager
+                notificationManager?.cancelAll()
+            } catch (e: Exception) {}
+
+            // 5. Force garbage collection and heap cleanup
+            try {
+                System.gc()
+                System.runFinalization()
+                System.gc()
+            } catch (e: Exception) {}
+
+            // 6. Generate fresh keys for clean restart
             val newKeys = IdentityKeys.generate()
             identityKeys = newKeys
             val privateKeysB64 = newKeys.exportPrivateKeysBase64()
-            prefs.edit().putString(KEY_PRIVATE_IDENTITY, privateKeysB64).apply()
+            prefs.edit().putString(KEY_PRIVATE_IDENTITY, privateKeysB64).commit()
 
             val newKeysJson = newKeys.exportPublicKeysBase64()
-            android.util.Log.i("CryptoModule", "EMERGENCY WIPE EXECUTED: All keys, secrets, and preferences zeroized")
+            android.util.Log.i("CryptoModule", "EMERGENCY WIPE EXECUTED: All keys, secrets, memory, caches, and preferences zeroized")
             promise.resolve(newKeysJson)
         } catch (e: Exception) {
             promise.reject("WIPE_FAILED", e)
