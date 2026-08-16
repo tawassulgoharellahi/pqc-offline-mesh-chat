@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🔒 PQC Offline Mesh Chat
+# PQC Offline Mesh Chat
 ### Serverless, Decentralized, Post-Quantum Encrypted Bluetooth Mesh Messenger for Android
 
 [![NIST PQC Standard](https://img.shields.io/badge/NIST%20PQC-ML--KEM%20%7C%20ML--DSA-blue.svg)](https://csrc.nist.gov/projects/post-quantum-cryptography)
@@ -18,47 +18,47 @@
 
 ---
 
-## 📑 Table of Contents
-- [Threat Model & Motivation](#-threat-model--motivation)
-- [Key Features](#-key-features)
-- [Cryptographic Architecture](#-cryptographic-architecture)
-- [Mesh Networking & Data Mule Architecture](#-mesh-networking--data-mule-architecture)
-- [System Architecture](#-system-architecture)
-- [Repository Structure](#-repository-structure)
-- [Prerequisites & Build Guide](#-prerequisites--build-guide)
-- [Operational Guide](#-operational-guide)
-- [Battery & Background Optimization](#-battery--background-optimization)
-- [Security & Threat Defense Summary](#-security--threat-defense-summary)
-- [License](#-license)
+## Table of Contents
+- [Threat Model and Motivation](#threat-model-and-motivation)
+- [Key Features](#key-features)
+- [Cryptographic Architecture](#cryptographic-architecture)
+- [Mesh Networking and Data Mule Architecture](#mesh-networking-and-data-mule-architecture)
+- [System Architecture](#system-architecture)
+- [Repository Structure](#repository-structure)
+- [Prerequisites and Build Guide](#prerequisites-and-build-guide)
+- [Operational Guide](#operational-guide)
+- [Battery and Background Optimization](#battery-and-background-optimization)
+- [Security and Threat Defense Summary](#security-and-threat-defense-summary)
+- [License](#license)
 
 ---
 
-## 🛡️ Threat Model & Motivation
+## Threat Model and Motivation
 
 Traditional mobile messaging applications (Signal, WhatsApp, Telegram) depend on centralized internet infrastructure and classical public-key cryptography (RSA, ECDH). This creates two fundamental vulnerabilities:
 
 1. **"Harvest Now, Decrypt Later" (HNDL)**: Adversaries can intercept and store classical encrypted traffic today, waiting for quantum computers to derive private keys using Shor's Algorithm.
-2. **Infrastructure Failure & Censorship**: Natural disasters, grid blackouts, or state-level internet shutdowns immediately disable centralized messengers.
+2. **Infrastructure Failure and Censorship**: Natural disasters, grid blackouts, or network-level internet shutdowns immediately disable centralized messengers.
 
-**PQC Offline Mesh Chat** solves both threats by providing an ad-hoc, peer-to-peer (P2P) mesh network that operates **100% offline**, secured by quantum-resistant mathematical lattices.
-
----
-
-## ✨ Key Features
-
-* **⚛️ Hybrid Post-Quantum Key Exchange**: Combines classical **X25519 ECDH** with NIST-standardized **Kyber-768 (ML-KEM)** via compiled native Rust core bindings (`uniffi` / JNI).
-* **✍️ Post-Quantum Digital Signatures**: Implements **Dilithium-3 (ML-DSA)** for public key authentication and message integrity.
-* **📡 Zero-Knowledge Multi-Hop Relay**: Intermediate nodes automatically route encrypted ciphertext across hops without having access to decryption keys.
-* **🚚 Delay-Tolerant "Data Mule" Store-and-Forward**: Messages addressed to out-of-range peers are queued and automatically delivered when an intermediate device travels into range—even if the sender is powered off.
-* **📷 Single QR Code Out-of-Band Pairing**: Scan your peer's QR code **once** to exchange public keys and BLE node identities over GATT (`KEY_REQ` / `KEY_RESP`).
-* **⚡ 24/7 Foreground Service**: Persistent native Android daemon (`BLEMeshService`) keeps the BLE GATT server alive in the background and with the screen locked.
-* **✓✓ Real-Time Encrypted Double Ticks**: WhatsApp-style delivery acknowledgments (`ACK`) routed through the mesh both in the active UI and natively in the background.
-* **🚨 Triple-Tap Emergency Panic Wipe**: Triple-tapping the header triggers native RAM zeroization, purges session keys, wipes outboxes, and restores a clean state.
-* **🗜️ LZ4 Wire Compression**: Automatic payload compression for packets $> 100$ bytes to optimize BLE MTU throughput.
+**PQC Offline Mesh Chat** mitigates both threats by providing an ad-hoc, peer-to-peer (P2P) mesh network that operates **100% offline**, secured by quantum-resistant mathematical lattices.
 
 ---
 
-## 🔐 Cryptographic Architecture
+## Key Features
+
+* **Hybrid Post-Quantum Key Exchange**: Combines classical **X25519 ECDH** with NIST-standardized **Kyber-768 (ML-KEM)** via compiled native Rust core bindings (`uniffi` / JNI).
+* **Post-Quantum Digital Signatures**: Implements **Dilithium-3 (ML-DSA)** for public key authentication and message integrity.
+* **Zero-Knowledge Multi-Hop Relay**: Intermediate nodes automatically route encrypted ciphertext across hops without having access to decryption keys.
+* **Delay-Tolerant "Data Mule" Store-and-Forward**: Messages addressed to out-of-range peers are queued and automatically delivered when an intermediate device travels into range—even if the sender is powered off.
+* **Single QR Code Out-of-Band Pairing**: Scan peer QR code once to exchange public keys and BLE node identities over GATT (`KEY_REQ` / `KEY_RESP`).
+* **24/7 Foreground Service**: Persistent native Android daemon (`BLEMeshService`) keeps the BLE GATT server active in the background and when the screen is locked.
+* **Real-Time Encrypted Delivery Confirmations**: Delivery acknowledgments (`ACK`) routed through the mesh both in the active UI and natively in the background.
+* **Triple-Tap Emergency Panic Wipe**: Triple-tapping the header triggers native RAM zeroization, purges session keys, wipes outboxes, and restores an uninitialized state.
+* **LZ4 Wire Compression**: Automatic payload compression for packets exceeding 100 bytes to optimize BLE MTU throughput.
+
+---
+
+## Cryptographic Architecture
 
 ```
                        ┌─────────────────────────────────────┐
@@ -81,13 +81,13 @@ Traditional mobile messaging applications (Signal, WhatsApp, Telegram) depend on
                        └─────────────────────────────────────┘
 ```
 
-1. **Identity & Key Generation**: Each device generates an `IdentityKeys` bundle containing an X25519 keypair, Kyber-768 keypair, and Dilithium-3 signature keypair.
+1. **Identity and Key Generation**: Each device generates an `IdentityKeys` bundle containing an X25519 keypair, Kyber-768 keypair, and Dilithium-3 signature keypair.
 2. **Deterministic KDF**: Shared secrets from X25519 and Kyber decapsulation are combined deterministically with lexical public key ordering and expanded via `HKDF-SHA256`.
 3. **Payload Security**: Every chat message is compressed via `lz4_flex`, encrypted with **AES-256-GCM** using a cryptographically secure random 12-byte nonce (`OsRng`), and signed.
 
 ---
 
-## 🌐 Mesh Networking & Data Mule Architecture
+## Mesh Networking and Data Mule Architecture
 
 ### 1. Direct Multi-Hop Routing
 Packets contain routing metadata (`type`, `dest`, `sender`, `msgId`, `ttl`) and the opaque ciphertext.
@@ -97,38 +97,38 @@ Packets contain routing metadata (`type`, `dest`, `sender`, `msgId`, `ttl`) and 
 
 ```mermaid
 graph LR
-    A[📱 Xiaomi<br>Sender] -->|BLE Hop 1| B[📱 Node B<br>Relay]
-    B -->|BLE Hop 2| C[📱 Node C<br>Relay]
-    C -->|BLE Hop 3| D[📱 Infinix<br>Recipient]
+    A[Device A<br>Sender] -->|BLE Hop 1| B[Node B<br>Relay]
+    B -->|BLE Hop 2| C[Node C<br>Relay]
+    C -->|BLE Hop 3| D[Device B<br>Recipient]
 ```
 
 ### 2. Delay-Tolerant "Data Mule" (Store-and-Forward)
-If the destination device is miles away or out of range, intermediate devices act as physical carriers ("Data Mules"):
+If the destination device is out of direct radio range, intermediate mobile devices act as physical carriers ("Data Mules"):
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor A as 📱 Xiaomi (Sender)
-    actor M as 🚗 Data Mule (Carrier)
-    actor B as 📱 Infinix (Recipient)
+    actor A as Device A (Sender)
+    actor M as Intermediate Carrier (Data Mule)
+    actor B as Device B (Recipient)
 
-    A->>M: 1. Hands off encrypted packet over BLE (dest = Infinix)
-    Note over M: 2. Mule stores packet in relayQueue
-    Note over A: 🔴 Xiaomi powers off / goes offline
-    Note over M: 3. Mule physically travels 10 km to Infinix area
-    M->>B: 4. Mule discovers Infinix & delivers packet over BLE
-    Note over B: 5. Infinix decrypts with pre-shared Kyber session! 🎉
-    B->>M: 6. Infinix sends encrypted ACK (dest = Xiaomi)
-    Note over M: 7. Mule carries ACK back when in Xiaomi range
+    A->>M: 1. Transmits encrypted packet over BLE (dest = Device B)
+    Note over M: 2. Carrier stores packet in relayQueue
+    Note over A: Device A powers off or disconnects
+    Note over M: 3. Carrier physically travels into Device B range
+    M->>B: 4. Carrier discovers Device B & delivers packet over BLE
+    Note over B: 5. Device B decrypts with pre-shared Kyber session
+    B->>M: 6. Device B sends encrypted ACK (dest = Device A)
+    Note over M: 7. Carrier routes ACK back when in Device A range
 ```
 
 ---
 
-## 🏗️ System Architecture
+## System Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│              WhatsApp-Styled React Native UI            │
+│                    React Native UI                      │
 │                 (TypeScript / App.tsx)                  │
 └───────────┬─────────────────────────────────┬───────────┘
             │                                 │
@@ -149,7 +149,7 @@ sequenceDiagram
 
 ---
 
-## 📁 Repository Structure
+## Repository Structure
 
 ```
 offline-pqc/
@@ -182,7 +182,7 @@ offline-pqc/
 
 ---
 
-## 🛠️ Prerequisites & Build Guide
+## Prerequisites and Build Guide
 
 ### Prerequisites
 1. **Rust Toolchain**: `rustup` with Android targets:
@@ -190,12 +190,12 @@ offline-pqc/
    rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android
    ```
 2. **Cargo NDK**: `cargo install cargo-ndk`
-3. **Android Studio & NDK**: Android SDK 34+ and NDK version `26.1.10909125`.
+3. **Android Studio and NDK**: Android SDK 34+ and NDK version `26.1.10909125`.
 4. **Node.js**: Node 18+ and Yarn/npm.
 
 ---
 
-### Step 1: Compile Rust Cryptographic Engine & Bindings
+### Step 1: Compile Rust Cryptographic Engine and Bindings
 ```bash
 # 1. Run unit tests
 cd rust_core
@@ -234,49 +234,47 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 
 ---
 
-## 📱 Operational Guide
+## Operational Guide
 
 1. **Startup**: Open the app on two or more Android devices. BLE Mesh advertising and peer discovery start automatically.
 2. **Pairing (Single QR Scan)**:
-   * Device A taps the **QR Icon** in the top header to display its public key QR code.
-   * Device B taps the **Camera Icon** and scans Device A's screen.
+   * Device A selects the QR display icon in the header to show its public key QR code.
+   * Device B opens the camera scanner and scans Device A's screen.
    * Device B derives the shared key and transmits a `KEY_REQ` packet back to Device A over BLE.
-   * **Both devices turn green ("Connected Peer") simultaneously**.
+   * Both devices establish the connection simultaneously.
 3. **Messaging**:
-   * Send messages instantly. If the peer is temporarily unreachable, messages queue in the **Outbox** and auto-flush on reconnection.
-   * Delivered messages transition from single tick (`✓`) to **double ticks (`✓✓`)** upon receipt of an encrypted ACK.
+   * Send messages instantly. If the peer is temporarily unreachable, messages queue in the Outbox and auto-flush on reconnection.
+   * Delivered messages display delivery confirmations upon receipt of an encrypted ACK.
 4. **Emergency Panic Wipe**:
-   * **Triple-tap the top header** to immediately wipe all private keys, zeroize RAM, clear outboxes, and return to an uninitialized state.
+   * Triple-tap the header to immediately wipe all private keys, zeroize RAM, clear outboxes, and return to an uninitialized state.
 
 ---
 
-## 🔋 Battery & Background Optimization
+## Battery and Background Optimization
 
-Because Android OS aggressive battery managers (Doze Mode) can suspend background BLE radios after 30 minutes, follow these recommended settings:
+Because Android OS power management (Doze Mode) can suspend background BLE radios after extended idle periods, follow these recommended settings:
 
-* **Xiaomi (HyperOS / MIUI)**:
-  * App Info $\rightarrow$ Battery Saver $\rightarrow$ Select **"No Restrictions"**.
-  * Enable **"Autostart"**.
-  * Lock the app in the Recent Apps screen (tap the 🔒 lock icon).
-* **Infinix / Transsion (XOS)**:
-  * App Info $\rightarrow$ Battery $\rightarrow$ Select **"Unrestricted"**.
-* **Samsung (OneUI) / Google Pixel (AOSP)**:
-  * App Info $\rightarrow$ App Battery Usage $\rightarrow$ Select **"Unrestricted"**.
+* **Devices with Custom Battery Optimizers**:
+  * App Info -> Battery Saver / Battery Usage -> Select **"No Restrictions"** (or **"Unrestricted"**).
+  * Enable **"Autostart"** (where available).
+  * Lock the application card in the Recent Apps window to prevent background termination on task clearance.
+* **Standard AOSP / Stock Android Devices**:
+  * App Info -> App Battery Usage -> Select **"Unrestricted"**.
 
 ---
 
-## 🔒 Security & Threat Defense Summary
+## Security and Threat Defense Summary
 
 | Threat / Attack Vector | Mitigation in PQC Mesh Chat |
 | :--- | :--- |
 | **Quantum Computing (Harvest Now, Decrypt Later)** | NIST **Kyber-768 (ML-KEM)** lattice-based key encapsulation. |
 | **Man-in-the-Middle (MITM) Attacks** | Out-of-band QR code verification + **Dilithium-3 (ML-DSA)** signatures. |
 | **Untrusted Intermediate Relay Nodes** | End-to-end **AES-256-GCM** encryption; relay nodes only inspect routing envelopes. |
-| **Replay Attacks** | In-memory & native deduplication table (`seenMsgIds`) drops duplicate packet IDs. |
+| **Replay Attacks** | In-memory and native deduplication table (`seenMsgIds`) drops duplicate packet IDs. |
 | **Physical Device Seizure** | **Triple-Tap Panic Wipe** zeroizes native RAM buffers and deletes persistent keys. |
-| **Network Outages & Internet Censorship** | **100% Offline** peer-to-peer Bluetooth Low Energy mesh routing. |
+| **Network Outages and Internet Censorship** | **100% Offline** peer-to-peer Bluetooth Low Energy mesh routing. |
 
 ---
 
-## 📄 License
+## License
 This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
