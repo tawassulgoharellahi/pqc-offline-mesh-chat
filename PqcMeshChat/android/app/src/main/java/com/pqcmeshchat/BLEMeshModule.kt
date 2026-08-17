@@ -537,14 +537,21 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     private fun extractNodeId(result: ScanResult): String? {
         val scanRecord = result.scanRecord
 
-        // 1. Direct getServiceData with parcelUuid
+        // 1. Manufacturer Specific Data (0xFFFF)
+        val manufacturerData = scanRecord?.getManufacturerSpecificData(0xFFFF)
+        if (manufacturerData != null && manufacturerData.isNotEmpty()) {
+            val str = String(manufacturerData, Charsets.UTF_8)
+            if (str.startsWith("NODE_")) return str
+        }
+
+        // 2. Direct getServiceData with parcelUuid
         val directData = scanRecord?.getServiceData(parcelUuid)
         if (directData != null && directData.isNotEmpty()) {
             val str = String(directData, Charsets.UTF_8)
             if (str.startsWith("NODE_")) return str
         }
 
-        // 2. Scan raw byte array for "NODE_" prefix (100% robust cross-Android parser)
+        // 3. Scan raw byte array for "NODE_" prefix (100% robust cross-Android parser)
         val rawBytes = scanRecord?.bytes
         if (rawBytes != null) {
             val rawString = String(rawBytes, Charsets.ISO_8859_1)
@@ -557,7 +564,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             }
         }
 
-        // 3. Iterate all service data entries in map
+        // 4. Iterate all service data entries in map
         if (scanRecord != null) {
             for ((_, dataBytes) in scanRecord.serviceData) {
                 if (dataBytes != null && dataBytes.isNotEmpty()) {
@@ -567,7 +574,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             }
         }
 
-        // 4. Check scanRecord deviceName or device.name
+        // 5. Check scanRecord deviceName or device.name
         val scanDevName = scanRecord?.deviceName
         if (scanDevName != null && scanDevName.startsWith("NODE_")) return scanDevName
 
@@ -595,30 +602,25 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             .setConnectable(true)
             .build()
 
-        // Primary data: ONLY Service UUID. Ensures we fit in 31 bytes on all Android versions.
+        // Primary data: Service UUID + Manufacturer Data (Node ID). Total size ~20 bytes, perfectly fits 31 byte limit.
         val data = AdvertiseData.Builder()
             .setIncludeDeviceName(false)
             .setIncludeTxPowerLevel(false)
             .addServiceUuid(parcelUuid)
-            .build()
-
-        // Scan response: explicitly contains the Node ID as Service Data
-        val scanResponse = AdvertiseData.Builder()
-            .setIncludeDeviceName(false)
-            .addServiceData(parcelUuid, getLocalNodeId().toByteArray(Charsets.UTF_8))
+            .addManufacturerData(0xFFFF, getLocalNodeId().toByteArray(Charsets.UTF_8))
             .build()
 
         try {
-            advertiser.startAdvertising(settings, data, scanResponse, advertiseCallback)
+            advertiser.startAdvertising(settings, data, advertiseCallback)
         } catch (e: Exception) {
             // Fallback: scanResponse may be too large on some devices, try without it
-            Log.w("BLEMeshModule", "Advertising with scanResponse failed, trying without: ${e.message}")
+            Log.w("BLEMeshModule", "Advertising failed, trying fallback: ${e.message}")
             try {
                 val fallbackData = AdvertiseData.Builder()
                     .setIncludeDeviceName(false)
                     .setIncludeTxPowerLevel(false)
                     .addServiceUuid(parcelUuid)
-                    .addServiceData(parcelUuid, getLocalNodeId().toByteArray(Charsets.UTF_8))
+                    .addManufacturerData(0xFFFF, getLocalNodeId().toByteArray(Charsets.UTF_8))
                     .build()
                 advertiser.startAdvertising(settings, fallbackData, advertiseCallback)
             } catch (e2: Exception) {
