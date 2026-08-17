@@ -602,29 +602,19 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             .setConnectable(true)
             .build()
 
-        // Primary data: Service UUID + Manufacturer Data (Node ID). Total size ~20 bytes, perfectly fits 31 byte limit.
+        // Primary data: Service UUID (4 bytes) + Service Data (17 bytes) + Flags (3 bytes) = 24 bytes (strictly <= 31 byte limit!)
         val data = AdvertiseData.Builder()
             .setIncludeDeviceName(false)
             .setIncludeTxPowerLevel(false)
-            .addManufacturerData(0xFFFF, getLocalNodeId().toByteArray(Charsets.UTF_8))
+            .addServiceUuid(parcelUuid)
+            .addServiceData(parcelUuid, getLocalNodeId().toByteArray(Charsets.UTF_8))
             .build()
 
         try {
             advertiser.startAdvertising(settings, data, advertiseCallback)
         } catch (e: Exception) {
-            // Fallback: scanResponse may be too large on some devices, try without it
-            Log.w("BLEMeshModule", "Advertising failed, trying fallback: ${e.message}")
-            try {
-                val fallbackData = AdvertiseData.Builder()
-                    .setIncludeDeviceName(false)
-                    .setIncludeTxPowerLevel(false)
-                    .addManufacturerData(0xFFFF, getLocalNodeId().toByteArray(Charsets.UTF_8))
-                    .build()
-                advertiser.startAdvertising(settings, fallbackData, advertiseCallback)
-            } catch (e2: Exception) {
-                Log.e("BLEMeshModule", "Advertising fallback also failed: ${e2.message}")
-                return false
-            }
+            Log.w("BLEMeshModule", "Advertising failed: ${e.message}")
+            return false
         }
         return true
     }
@@ -661,6 +651,11 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 triggerFifoDrain()
             }
         }
+
+        override fun onScanFailed(errorCode: Int) {
+            super.onScanFailed(errorCode)
+            Log.e("BLEMeshModule", "BLE scanCallback failed with errorCode=$errorCode")
+        }
     }
 
     @ReactMethod
@@ -674,12 +669,14 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         try {
             bleScanner?.stopScan(scanCallback)
         } catch (e: Exception) {}
+
         val filter = ScanFilter.Builder()
-            .setManufacturerData(0xFFFF, null)
+            .setServiceUuid(parcelUuid)
             .build()
 
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+            .setReportDelay(0)
             .build()
 
         try {
@@ -688,9 +685,10 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 settings,
                 scanCallback
             )
-            Log.i("BLEMeshModule", "Peer discovery started with Manufacturer Data filter")
+            Log.i("BLEMeshModule", "Peer discovery started with Service UUID filter")
             promise?.resolve("BLE Scan Started")
         } catch (e: Exception) {
+            Log.e("BLEMeshModule", "Peer discovery startScan error: ${e.message}")
             promise?.reject("SCAN_ERROR", e.message)
         }
     }
@@ -1116,8 +1114,9 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     }
                 }
                 try {
+                    val filter = ScanFilter.Builder().setServiceUuid(parcelUuid).build()
                     val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
-                    scanner.startScan(null, settings, quickCallback)
+                    scanner.startScan(listOf(filter), settings, quickCallback)
                     latch.await(3000, java.util.concurrent.TimeUnit.MILLISECONDS)
                     try { scanner.stopScan(quickCallback) } catch (e: Exception) {}
                 } catch (e: Exception) {
