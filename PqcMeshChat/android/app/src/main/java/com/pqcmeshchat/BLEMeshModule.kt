@@ -595,14 +595,14 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             .setConnectable(true)
             .build()
 
-        // Primary data: service UUID (for scan filter matching) + device name (NODE_XXXXXXXX)
+        // Primary data: ONLY Service UUID. Ensures we fit in 31 bytes on all Android versions.
         val data = AdvertiseData.Builder()
-            .setIncludeDeviceName(true)
+            .setIncludeDeviceName(false)
             .setIncludeTxPowerLevel(false)
             .addServiceUuid(parcelUuid)
             .build()
 
-        // Scan response: service data carrying the node ID as bytes
+        // Scan response: explicitly contains the Node ID as Service Data
         val scanResponse = AdvertiseData.Builder()
             .setIncludeDeviceName(false)
             .addServiceData(parcelUuid, getLocalNodeId().toByteArray(Charsets.UTF_8))
@@ -615,9 +615,10 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             Log.w("BLEMeshModule", "Advertising with scanResponse failed, trying without: ${e.message}")
             try {
                 val fallbackData = AdvertiseData.Builder()
-                    .setIncludeDeviceName(true)
+                    .setIncludeDeviceName(false)
                     .setIncludeTxPowerLevel(false)
                     .addServiceUuid(parcelUuid)
+                    .addServiceData(parcelUuid, getLocalNodeId().toByteArray(Charsets.UTF_8))
                     .build()
                 advertiser.startAdvertising(settings, fallbackData, advertiseCallback)
             } catch (e2: Exception) {
