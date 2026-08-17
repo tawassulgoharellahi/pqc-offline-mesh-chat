@@ -686,7 +686,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
         try {
             bluetoothAdapter?.bluetoothLeScanner?.startScan(
-                emptyList(),
+                null,
                 settings,
                 scanCallback
             )
@@ -1120,7 +1120,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 }
                 try {
                     val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
-                    scanner.startScan(emptyList(), settings, quickCallback)
+                    scanner.startScan(null, settings, quickCallback)
                     latch.await(3000, java.util.concurrent.TimeUnit.MILLISECONDS)
                     try { scanner.stopScan(quickCallback) } catch (e: Exception) {}
                 } catch (e: Exception) {
