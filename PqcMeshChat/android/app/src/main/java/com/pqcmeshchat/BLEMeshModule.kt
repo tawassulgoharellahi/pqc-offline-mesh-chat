@@ -965,6 +965,24 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     }
 
     @ReactMethod
+    fun disconnectPeer(peerAddress: String, promise: Promise? = null) {
+        try {
+            val targetMac = resolveTargetMac(peerAddress) ?: peerAddress
+            val gatt = connectionPool.remove(targetMac)
+            connectionStateMap.remove(targetMac)
+            try {
+                gatt?.disconnect()
+                gatt?.close()
+            } catch (e: Exception) {}
+
+            Log.i("BLEMeshModule", "Disconnected peer session: $peerAddress ($targetMac)")
+            promise?.resolve(true)
+        } catch (e: Exception) {
+            promise?.reject("DISCONNECT_ERROR", e.message)
+        }
+    }
+
+    @ReactMethod
     fun deleteOutboxMessage(msgId: String, promise: Promise? = null) {
         fifoDb.markDelivered(msgId)
         promise?.resolve(true)

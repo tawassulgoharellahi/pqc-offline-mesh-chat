@@ -377,14 +377,32 @@ export default function App() {
   };
 
   const disconnectPeer = async () => {
-    updateHandshakeState(false);
-    setTargetDevice('');
-    try {
-      await CryptoModule.clearSession();
-      await BLEMeshModule.resetMeshState();
-    } catch (e) {
-      console.warn("Error clearing session:", e);
-    }
+    Alert.alert(
+      "End Chat Session",
+      `Disconnect active encrypted session with ${targetDevice}?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Disconnect",
+          style: "destructive",
+          onPress: async () => {
+            const peerToDisconnect = targetDevice;
+            updateHandshakeState(false);
+            setTargetDevice('');
+            setTheirKeys('');
+            setMessages([]);
+            try {
+              await CryptoModule.clearSession();
+              if (peerToDisconnect) {
+                await BLEMeshModule.disconnectPeer(peerToDisconnect);
+              }
+            } catch (e) {
+              console.warn("Error clearing session:", e);
+            }
+          }
+        }
+      ]
+    );
   };
 
   const sendMessage = async () => {
