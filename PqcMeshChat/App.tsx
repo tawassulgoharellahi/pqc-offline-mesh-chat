@@ -797,6 +797,10 @@ export default function App() {
                     }
                   }
 
+                  if (data.a && typeof data.a === 'string' && data.a.length > 10) {
+                    await BLEMeshModule.mapNodeToMac(targetNodeId, data.a);
+                  }
+
                   setTargetDevice(targetNodeId);
                   await CryptoModule.setTargetDevice(targetNodeId);
 

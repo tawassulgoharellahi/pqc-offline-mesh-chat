@@ -269,6 +269,24 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     }
 
     @ReactMethod
+    fun getBleAddress(promise: Promise) {
+        val map = Arguments.createMap()
+        map.putString("nodeId", getLocalNodeId())
+        map.putString("address", "")
+        promise.resolve(map)
+    }
+
+    @ReactMethod
+    fun mapNodeToMac(nodeId: String, macAddress: String, promise: Promise? = null) {
+        if (nodeId.isNotEmpty() && isValidTargetMac(macAddress)) {
+            nodeToMacMap[nodeId] = macAddress
+            discoveredPeers[macAddress] = nodeId
+            Log.i("BLEMeshModule", "Explicitly mapped QR hint: $nodeId -> $macAddress")
+        }
+        promise?.resolve(true)
+    }
+
+    @ReactMethod
     fun getRelayedCount(promise: Promise) {
         promise.resolve(relayQueue.size)
     }
@@ -565,10 +583,13 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             .build()
 
         val data = AdvertiseData.Builder()
-            .setIncludeDeviceName(true)
+            .setIncludeDeviceName(false)
+            .setIncludeTxPowerLevel(false)
+            .addServiceData(parcelUuid, getLocalNodeId().toByteArray(Charsets.UTF_8))
             .build()
 
         val scanResponse = AdvertiseData.Builder()
+            .setIncludeDeviceName(false)
             .addServiceUuid(parcelUuid)
             .build()
 
