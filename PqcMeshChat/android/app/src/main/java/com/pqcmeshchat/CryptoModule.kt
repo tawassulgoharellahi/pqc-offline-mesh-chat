@@ -266,8 +266,9 @@ class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
                 }
             } catch (e: Exception) {}
 
-            // 3. Clear all disk and cache directories
+            // 3. Clear all disk and cache directories + SQLite FIFO database
             try {
+                DiskQueueDatabase.getInstance(reactApplicationContext).clearAll()
                 reactApplicationContext.cacheDir?.deleteRecursively()
                 reactApplicationContext.codeCacheDir?.deleteRecursively()
                 reactApplicationContext.externalCacheDir?.deleteRecursively()

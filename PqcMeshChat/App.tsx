@@ -113,6 +113,7 @@ export default function App() {
   const [discoveredPeers, setDiscoveredPeers] = useState<Peer[]>([]);
   const [isDiscovering, setIsDiscovering] = useState<boolean>(false);
   const [showPeersModal, setShowPeersModal] = useState<boolean>(false);
+  const [isBtEnabled, setIsBtEnabled] = useState<boolean>(true);
 
   // QR Scanning & Display Modals
   const [isScanning, setIsScanning] = useState<boolean>(false);
@@ -226,6 +227,11 @@ export default function App() {
       setMeshActive(true);
       
       try {
+        const btActive = await BLEMeshModule.isBluetoothEnabled();
+        setIsBtEnabled(btActive);
+      } catch (e) {}
+
+      try {
         await BLEMeshModule.startForegroundService();
       } catch (e) {
         console.warn("Foreground service start notice:", e);
@@ -329,6 +335,10 @@ export default function App() {
         setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, status: 'transmitted' } : msg));
       }
     });
+
+    const btSub = bleEmitter?.addListener('onBluetoothStateChanged', (event) => {
+      setIsBtEnabled(event.enabled);
+    });
     
     return () => {
       recvSub?.remove();
@@ -337,6 +347,7 @@ export default function App() {
       peerSub?.remove();
       relaySub?.remove();
       deliveredSub?.remove();
+      btSub?.remove();
     };
   }, []);
 
@@ -514,6 +525,18 @@ export default function App() {
           </View>
         </View>
 
+        {/* Enforced Bluetooth Alert Bar */}
+        {!isBtEnabled && (
+          <Pressable 
+            style={{ backgroundColor: '#DC2626', paddingVertical: 9, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}
+            onPress={() => BLEMeshModule.requestEnableBluetooth()}
+          >
+            <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 13 }}>
+              ⚠️ Bluetooth is OFF — Tap to Enable Mesh
+            </Text>
+          </Pressable>
+        )}
+
         {/* Active Connected Peer Status Banner */}
         <View style={styles.peerBanner}>
           {targetDevice ? (
@@ -521,7 +544,7 @@ export default function App() {
               <View style={{ flex: 1, paddingRight: 8 }}>
                 <Text style={styles.peerText} numberOfLines={1}>Connected Peer: {targetDevice}</Text>
                 <Text style={styles.pqcStatus}>
-                  {handshakeDone ? "🔒 Kyber-768 + AES-256 Encrypted Session Active" : "⌛ Exchanging PQC keys..."}
+                  {handshakeDone ? "🔒 Persistent Kyber-768 PQC Link Active" : "⌛ Exchanging PQC keys..."}
                 </Text>
               </View>
               <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
