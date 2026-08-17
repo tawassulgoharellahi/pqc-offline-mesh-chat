@@ -626,6 +626,15 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             val address = device.address
 
             val advertisedNode = extractNodeId(result)
+            val hasOurService = result.scanRecord?.serviceUuids?.any { 
+                it.toString().contains("ff01", ignoreCase = true) 
+            } == true || result.scanRecord?.getServiceData(parcelUuid) != null
+
+            // Drop non-PQC beacons in software when running unfiltered on hardware with 0 filter slots
+            if (advertisedNode == null && !hasOurService) {
+                return
+            }
+
             val name = advertisedNode ?: device.name ?: result.scanRecord?.deviceName ?: "PQC Node (${address.takeLast(5)})"
 
             if (name == getLocalNodeId() || (advertisedNode != null && advertisedNode == getLocalNodeId())) {
@@ -670,9 +679,12 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             bleScanner?.stopScan(scanCallback)
         } catch (e: Exception) {}
 
-        val filter = ScanFilter.Builder()
-            .setServiceUuid(parcelUuid)
-            .build()
+        val supportsHwFiltering = bluetoothAdapter?.isOffloadedFilteringSupported() == true
+        val filters = if (supportsHwFiltering) {
+            listOf(ScanFilter.Builder().setServiceUuid(parcelUuid).build())
+        } else {
+            emptyList()
+        }
 
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
@@ -681,11 +693,11 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
         try {
             bluetoothAdapter?.bluetoothLeScanner?.startScan(
-                listOf(filter),
+                filters,
                 settings,
                 scanCallback
             )
-            Log.i("BLEMeshModule", "Peer discovery started with Service UUID filter")
+            Log.i("BLEMeshModule", "Peer discovery started (hwFilter=$supportsHwFiltering)")
             promise?.resolve("BLE Scan Started")
         } catch (e: Exception) {
             Log.e("BLEMeshModule", "Peer discovery startScan error: ${e.message}")
@@ -1114,9 +1126,14 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     }
                 }
                 try {
-                    val filter = ScanFilter.Builder().setServiceUuid(parcelUuid).build()
+                    val supportsHwFiltering = bluetoothAdapter?.isOffloadedFilteringSupported() == true
+                    val filters = if (supportsHwFiltering) {
+                        listOf(ScanFilter.Builder().setServiceUuid(parcelUuid).build())
+                    } else {
+                        emptyList()
+                    }
                     val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
-                    scanner.startScan(listOf(filter), settings, quickCallback)
+                    scanner.startScan(filters, settings, quickCallback)
                     latch.await(3000, java.util.concurrent.TimeUnit.MILLISECONDS)
                     try { scanner.stopScan(quickCallback) } catch (e: Exception) {}
                 } catch (e: Exception) {
