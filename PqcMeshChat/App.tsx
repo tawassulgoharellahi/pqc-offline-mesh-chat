@@ -113,7 +113,6 @@ export default function App() {
   const [discoveredPeers, setDiscoveredPeers] = useState<Peer[]>([]);
   const [isDiscovering, setIsDiscovering] = useState<boolean>(false);
   const [showPeersModal, setShowPeersModal] = useState<boolean>(false);
-  const [isBtEnabled, setIsBtEnabled] = useState<boolean>(true);
 
   // QR Scanning & Display Modals
   const [isScanning, setIsScanning] = useState<boolean>(false);
@@ -155,6 +154,23 @@ export default function App() {
       const macToSave = targetMacOverride || targetDevice;
       if (macToSave) {
         await CryptoModule.setTargetDevice(macToSave);
+        try {
+          await CryptoModule.saveContact({
+            nodeId: macToSave,
+            name: macToSave.replace("NODE_", "").substring(0, 6),
+            publicKeys: keysJsonString,
+            sessionMasterKey: "",
+            targetMac: macToSave,
+            isActive: true
+          });
+          const history = await CryptoModule.getChatHistory(macToSave, 100);
+          if (history && history.length > 0) {
+            setMessages(history);
+            setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: false }), 80);
+          }
+        } catch (cErr) {
+          console.warn("Contact save error:", cErr);
+        }
       }
       updateHandshakeState(true);
       console.log("Handshake success!");
@@ -174,20 +190,41 @@ export default function App() {
       setMyMac(mac);
       setQrPayload(JSON.stringify({ m: mac, k: base64Keys }));
 
-      // Restore existing PQC chat session if present
+      // Restore existing PQC chat session & active contact if present
       try {
+        let activePeer = '';
+        const activeContact = await CryptoModule.getActiveContact();
+        if (activeContact && activeContact.nodeId) {
+          activePeer = activeContact.nodeId;
+          setTargetDevice(activeContact.nodeId);
+          if (activeContact.publicKeys) setTheirKeys(activeContact.publicKeys);
+          updateHandshakeState(true);
+        }
+
         const sessionInfo = await CryptoModule.restoreSession();
         if (sessionInfo && sessionInfo.restored && sessionInfo.targetMac) {
+          activePeer = sessionInfo.targetMac;
           setTargetDevice(sessionInfo.targetMac);
           updateHandshakeState(true);
           console.log("Restored active PQC session for peer:", sessionInfo.targetMac);
+        }
 
-          // Load messages that arrived while the app was closed.
-          // getPendingMessages() reads-then-clears atomically so they never show twice.
+        if (activePeer) {
+          // 1. Load persistent chat history from on-disk SQLite
+          try {
+            const history = await CryptoModule.getChatHistory(activePeer, 100);
+            if (history && history.length > 0) {
+              setMessages(history);
+              setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: false }), 120);
+            }
+          } catch (hErr) {
+            console.warn("History load error:", hErr);
+          }
+
+          // 2. Load messages that arrived while the app was closed.
           try {
             const pending = await CryptoModule.getPendingMessages();
             if (pending && pending.length > 0) {
-              const restored: Message[] = [];
               for (const item of pending) {
                 try {
                   let text = item.payload;
@@ -196,19 +233,19 @@ export default function App() {
                   } catch (_) {}
                   const d = new Date(item.timestamp);
                   const timeStr = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-                  restored.push({
+                  const pMsg: Message = {
                     id: `pending_${item.timestamp}_${Math.random()}`,
                     sender: item.sender || 'Peer',
                     text,
                     isMine: false,
                     time: timeStr,
-                  });
+                    status: 'delivered'
+                  };
+                  await CryptoModule.saveChatMessage({ ...pMsg, peerId: activePeer, timestamp: item.timestamp });
+                  setMessages(prev => [...prev, pMsg]);
                 } catch (_) {}
               }
-              if (restored.length > 0) {
-                setMessages(prev => [...restored, ...prev]);
-                setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: false }), 120);
-              }
+              setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: false }), 120);
             }
           } catch (pendErr) {
             console.warn("Pending messages load error:", pendErr);
@@ -226,11 +263,6 @@ export default function App() {
       }
       setMeshActive(true);
       
-      try {
-        const btActive = await BLEMeshModule.isBluetoothEnabled();
-        setIsBtEnabled(btActive);
-      } catch (e) {}
-
       try {
         await BLEMeshModule.startForegroundService();
       } catch (e) {
@@ -261,7 +293,8 @@ export default function App() {
             const ackedMsgId = displayPayload.substring(4);
             console.log("🟢 [UI] Received ACK for msgId:", ackedMsgId);
             await BLEMeshModule.deleteOutboxMessage(ackedMsgId);
-            setMessages(prev => prev.map(msg => msg.id === ackedMsgId ? { ...msg, status: 'acked' } : msg));
+            await CryptoModule.updateChatMessageStatus(ackedMsgId, 'delivered');
+            setMessages(prev => prev.map(msg => msg.id === ackedMsgId ? { ...msg, status: 'delivered' } : msg));
             return;
         }
 
@@ -272,8 +305,6 @@ export default function App() {
                 const ackCiphertext = await CryptoModule.encryptMessage(ackPlaintext);
                 const localMac = await BLEMeshModule.getMacAddress();
                 
-                // Wait 1.75 seconds before sending the ACK to ensure the sender 
-                // is ready to receive and not busy sending more chunks.
                 setTimeout(() => {
                     BLEMeshModule.sendMessageToDevice(senderAddress || targetDevice, ackCiphertext, localMac, `ACK_${msgId}`);
                 }, 1750);
@@ -285,13 +316,31 @@ export default function App() {
         const now = new Date();
         const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
         
-        setMessages(prev => [...prev, {
+        const recvMsgObj: Message = {
           id: msgId || Math.random().toString(),
           sender: senderAddress || 'Peer',
           text: displayPayload,
           isMine: false,
-          time: timeStr
-        }]);
+          time: timeStr,
+          status: 'delivered'
+        };
+
+        try {
+          await CryptoModule.saveChatMessage({
+            id: recvMsgObj.id,
+            peerId: senderAddress || targetDevice,
+            sender: recvMsgObj.sender,
+            text: recvMsgObj.text,
+            isMine: false,
+            time: timeStr,
+            status: 'delivered',
+            timestamp: Date.now()
+          });
+        } catch (dbErr) {
+          console.warn("SQLite save received error:", dbErr);
+        }
+
+        setMessages(prev => [...prev, recvMsgObj]);
 
         setTimeout(() => {
           scrollViewRef.current?.scrollToEnd({ animated: true });
@@ -322,22 +371,20 @@ export default function App() {
       setRelayedCount(prev => prev + 1);
     });
 
-    const transmittedSub = bleEmitter?.addListener('onMessageTransmitted', (event) => {
+    const transmittedSub = bleEmitter?.addListener('onMessageTransmitted', async (event) => {
       const { msgId } = event;
       if (msgId) {
+        await CryptoModule.updateChatMessageStatus(msgId, 'transmitted');
         setMessages(prev => prev.map(msg => (msg.id === msgId && msg.status === 'queued') ? { ...msg, status: 'transmitted' } : msg));
       }
     });
 
-    const deliveredSub = bleEmitter?.addListener('onMessageDelivered', (event) => {
+    const deliveredSub = bleEmitter?.addListener('onMessageDelivered', async (event) => {
       const { msgId } = event;
       if (msgId) {
-        setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, status: 'transmitted' } : msg));
+        await CryptoModule.updateChatMessageStatus(msgId, 'delivered');
+        setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, status: 'delivered' } : msg));
       }
-    });
-
-    const btSub = bleEmitter?.addListener('onBluetoothStateChanged', (event) => {
-      setIsBtEnabled(event.enabled);
     });
     
     return () => {
@@ -347,7 +394,6 @@ export default function App() {
       peerSub?.remove();
       relaySub?.remove();
       deliveredSub?.remove();
-      btSub?.remove();
     };
   }, []);
 
@@ -377,32 +423,14 @@ export default function App() {
   };
 
   const disconnectPeer = async () => {
-    Alert.alert(
-      "End Chat Session",
-      `Disconnect active encrypted session with ${targetDevice}?`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Disconnect",
-          style: "destructive",
-          onPress: async () => {
-            const peerToDisconnect = targetDevice;
-            updateHandshakeState(false);
-            setTargetDevice('');
-            setTheirKeys('');
-            setMessages([]);
-            try {
-              await CryptoModule.clearSession();
-              if (peerToDisconnect) {
-                await BLEMeshModule.disconnectPeer(peerToDisconnect);
-              }
-            } catch (e) {
-              console.warn("Error clearing session:", e);
-            }
-          }
-        }
-      ]
-    );
+    updateHandshakeState(false);
+    setTargetDevice('');
+    try {
+      await CryptoModule.clearSession();
+      await BLEMeshModule.resetMeshState();
+    } catch (e) {
+      console.warn("Error clearing session:", e);
+    }
   };
 
   const sendMessage = async () => {
@@ -421,16 +449,34 @@ export default function App() {
     const now = new Date();
     const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
 
-    // 1. Clear input & render message bubble INSTANTLY (0ms lag!)
-    setInputText('');
-    setMessages(prev => [...prev, {
+    const newMsg: Message = {
       id: msgId,
       sender: 'Me',
       text: textToSend,
       isMine: true,
       time: timeStr,
       status: 'queued'
-    }]);
+    };
+
+    // 1. Clear input & render message bubble INSTANTLY (0ms lag!)
+    setInputText('');
+    setMessages(prev => [...prev, newMsg]);
+
+    // Save to SQLite
+    try {
+      await CryptoModule.saveChatMessage({
+        id: msgId,
+        peerId: targetDevice,
+        sender: 'Me',
+        text: textToSend,
+        isMine: true,
+        time: timeStr,
+        status: 'queued',
+        timestamp: Date.now()
+      });
+    } catch (dbErr) {
+      console.warn("SQLite save outgoing error:", dbErr);
+    }
 
     setTimeout(() => {
       scrollViewRef.current?.scrollToEnd({ animated: true });
@@ -441,6 +487,7 @@ export default function App() {
       const ciphertextBase64 = await CryptoModule.encryptMessage(textToSend);
       const res = await BLEMeshModule.sendMessageToDevice(targetDevice, ciphertextBase64, myMac, msgId);
       if (res === 'DELIVERED') {
+        await CryptoModule.updateChatMessageStatus(msgId, 'transmitted');
         setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, status: 'transmitted' } : msg));
       }
     } catch (e: any) {
@@ -502,17 +549,6 @@ export default function App() {
     }
   };
 
-  const openMyQrModal = async () => {
-    try {
-      const nodeId = await BLEMeshModule.getMacAddress();
-      const keys = await CryptoModule.exportPublicKeysBase64();
-      setMyMac(nodeId);
-      setMyKeys(keys);
-      setQrPayload(JSON.stringify({ m: nodeId, k: keys }));
-    } catch (e) {}
-    setShowMyQrModal(true);
-  };
-
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#075E54" />
@@ -536,7 +572,7 @@ export default function App() {
           <View style={styles.headerRight}>
             <Pressable 
               style={({ pressed }) => [styles.topIconCircle, pressed && styles.topIconCirclePressed]} 
-              onPress={openMyQrModal}
+              onPress={() => setShowMyQrModal(true)}
               android_ripple={{ color: 'rgba(255, 255, 255, 0.25)', borderless: true, radius: 20 }}
               hitSlop={8}
             >
@@ -554,18 +590,6 @@ export default function App() {
           </View>
         </View>
 
-        {/* Enforced Bluetooth Alert Bar */}
-        {!isBtEnabled && (
-          <Pressable 
-            style={{ backgroundColor: '#DC2626', paddingVertical: 9, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}
-            onPress={() => BLEMeshModule.requestEnableBluetooth()}
-          >
-            <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 13 }}>
-              ⚠️ Bluetooth is OFF — Tap to Enable Mesh
-            </Text>
-          </Pressable>
-        )}
-
         {/* Active Connected Peer Status Banner */}
         <View style={styles.peerBanner}>
           {targetDevice ? (
@@ -573,7 +597,7 @@ export default function App() {
               <View style={{ flex: 1, paddingRight: 8 }}>
                 <Text style={styles.peerText} numberOfLines={1}>Connected Peer: {targetDevice}</Text>
                 <Text style={styles.pqcStatus}>
-                  {handshakeDone ? "🔒 Persistent Kyber-768 PQC Link Active" : "⌛ Exchanging PQC keys..."}
+                  {handshakeDone ? "🔒 Kyber-768 + AES-256 Encrypted Session Active" : "⌛ Exchanging PQC keys..."}
                 </Text>
               </View>
               <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
@@ -787,42 +811,39 @@ export default function App() {
                 }
 
                 if (data && data.m) {
-                  let targetNodeId = data.m;
-                  
+                  let resolvedMac = data.m;
                   const cleanNodeId = data.m.replace("NODE_", "").replace("_", "").toLowerCase();
                   const matchedPeer = discoveredPeers.find(p => 
-                    p.address.toLowerCase() === data.m.toLowerCase() || 
+                    p.address === data.m || 
                     p.name.toLowerCase().replace(" ", "").includes(cleanNodeId) || 
                     cleanNodeId.includes(p.name.toLowerCase().replace(" ", ""))
                   );
-                  if (matchedPeer && matchedPeer.name.startsWith("NODE_")) {
-                    targetNodeId = matchedPeer.name;
-                    await BLEMeshModule.mapNodeToMac(targetNodeId, matchedPeer.address);
+                  if (matchedPeer) {
+                    resolvedMac = matchedPeer.address;
                   }
-
-                  if (data.a && typeof data.a === 'string' && data.a.length > 10) {
-                    await BLEMeshModule.mapNodeToMac(targetNodeId, data.a);
-                  }
-
-                  setTargetDevice(targetNodeId);
-                  await CryptoModule.setTargetDevice(targetNodeId);
+                  
+                  setTargetDevice(resolvedMac);
 
                   if (data.k) {
                     const keysJsonString = typeof data.k === 'string' ? data.k : JSON.stringify(data.k);
                     setTheirKeys(keysJsonString);
-                    await performHandshakeWithKeys(keysJsonString, targetNodeId);
+                    await performHandshakeWithKeys(keysJsonString, resolvedMac);
                     
                     try {
-                      const localNodeId = await BLEMeshModule.getMacAddress();
-                      await BLEMeshModule.requestPqcKeysOverBle(targetNodeId, localNodeId);
+                      const localMac = await BLEMeshModule.getMacAddress();
+                      await BLEMeshModule.requestPqcKeysOverBle(resolvedMac, localMac);
                     } catch (e) {
-                      console.warn("BLE key exchange notice:", e);
+                      console.warn("Error requesting keys back:", e);
                     }
-
-                    Alert.alert("QR Pair Successful! 🔒", "Established Kyber-768 PQC session with peer!");
-                  } else {
-                    Alert.alert("QR Pair Successful!", "Paired with peer " + targetNodeId);
                   }
+
+                  try {
+                    await connectToPeer(resolvedMac);
+                  } catch (e) {
+                    console.warn("BLE connect error:", e);
+                  }
+
+                  Alert.alert("QR Pair Successful! 🔒", "Established Kyber-768 PQC session with peer!");
                 } else {
                   Alert.alert("QR Read Notice", scannedValue);
                 }
