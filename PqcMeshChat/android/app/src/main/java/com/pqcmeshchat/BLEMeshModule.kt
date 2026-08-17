@@ -954,8 +954,46 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             put("keys", myKeys)
         }.toString()
 
-        val targetMac = resolveTargetMac(deviceAddress) ?: deviceAddress
-        sendMessageDirect(targetMac, reqJson) { success ->
+        var targetMac = resolveTargetMac(deviceAddress)
+
+        // If targetMac is not found in cache yet, perform a fast active LE scan for up to 1.5s
+        if (targetMac == null) {
+            Log.i("BLEMeshModule", "Target $deviceAddress not in cache, performing fast discovery scan...")
+            val scanner = bluetoothAdapter?.bluetoothLeScanner
+            if (scanner != null) {
+                val latch = java.util.concurrent.CountDownLatch(1)
+                val quickCallback = object : ScanCallback() {
+                    override fun onScanResult(callbackType: Int, result: ScanResult) {
+                        val addr = result.device.address
+                        val serviceData = result.scanRecord?.getServiceData(parcelUuid)
+                        val advertisedNode = if (serviceData != null) String(serviceData, Charsets.UTF_8) else null
+                        if (advertisedNode != null && advertisedNode.startsWith("NODE_")) {
+                            nodeToMacMap[advertisedNode] = addr
+                            discoveredPeers[addr] = advertisedNode
+                            if (isPeerMatch(advertisedNode, deviceAddress)) {
+                                targetMac = addr
+                                latch.countDown()
+                            }
+                        }
+                    }
+                }
+                try {
+                    val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+                    scanner.startScan(null, settings, quickCallback)
+                    latch.await(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    try { scanner.stopScan(quickCallback) } catch (e: Exception) {}
+                } catch (e: Exception) {
+                    Log.w("BLEMeshModule", "Fast scan error: ${e.message}")
+                }
+            }
+        }
+
+        if (targetMac == null) {
+            targetMac = resolveTargetMac(deviceAddress) ?: deviceAddress
+        }
+
+        Log.i("BLEMeshModule", "requestPqcKeysOverBle connecting to $targetMac for $deviceAddress")
+        sendMessageDirect(targetMac!!, reqJson) { success ->
             if (success) {
                 promise.resolve("KEY_REQ_SENT")
             } else {

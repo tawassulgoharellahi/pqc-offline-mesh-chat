@@ -502,6 +502,17 @@ export default function App() {
     }
   };
 
+  const openMyQrModal = async () => {
+    try {
+      const nodeId = await BLEMeshModule.getMacAddress();
+      const keys = await CryptoModule.exportPublicKeysBase64();
+      setMyMac(nodeId);
+      setMyKeys(keys);
+      setQrPayload(JSON.stringify({ m: nodeId, k: keys }));
+    } catch (e) {}
+    setShowMyQrModal(true);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#075E54" />
@@ -525,7 +536,7 @@ export default function App() {
           <View style={styles.headerRight}>
             <Pressable 
               style={({ pressed }) => [styles.topIconCircle, pressed && styles.topIconCirclePressed]} 
-              onPress={() => setShowMyQrModal(true)}
+              onPress={openMyQrModal}
               android_ripple={{ color: 'rgba(255, 255, 255, 0.25)', borderless: true, radius: 20 }}
               hitSlop={8}
             >
@@ -776,28 +787,27 @@ export default function App() {
                 }
 
                 if (data && data.m) {
-                  let resolvedMac = data.m;
-                  const cleanNodeId = data.m.replace("NODE_", "").replace("_", "").toLowerCase();
-                  const matchedPeer = discoveredPeers.find(p => 
-                    p.address === data.m || 
-                    p.name.toLowerCase().replace(" ", "").includes(cleanNodeId) || 
-                    cleanNodeId.includes(p.name.toLowerCase().replace(" ", ""))
-                  );
-                  if (matchedPeer) {
-                    resolvedMac = matchedPeer.address;
-                  }
+                  let targetNodeId = data.m;
                   
-                  setTargetDevice(resolvedMac);
-                  await CryptoModule.setTargetDevice(resolvedMac);
+                  // If scanned an old-style MAC address, try to resolve it to a Node ID from discoveredPeers
+                  if (!targetNodeId.startsWith("NODE_")) {
+                    const peer = discoveredPeers.find(p => p.address.toLowerCase() === data.m.toLowerCase());
+                    if (peer && peer.name.startsWith("NODE_")) {
+                      targetNodeId = peer.name;
+                    }
+                  }
+
+                  setTargetDevice(targetNodeId);
+                  await CryptoModule.setTargetDevice(targetNodeId);
 
                   if (data.k) {
                     const keysJsonString = typeof data.k === 'string' ? data.k : JSON.stringify(data.k);
                     setTheirKeys(keysJsonString);
-                    await performHandshakeWithKeys(keysJsonString, resolvedMac);
+                    await performHandshakeWithKeys(keysJsonString, targetNodeId);
                     
                     try {
-                      const localMac = await BLEMeshModule.getMacAddress();
-                      await BLEMeshModule.requestPqcKeysOverBle(resolvedMac, localMac);
+                      const localNodeId = await BLEMeshModule.getMacAddress();
+                      await BLEMeshModule.requestPqcKeysOverBle(targetNodeId, localNodeId);
                     } catch (e) {
                       console.warn("Error requesting keys back:", e);
                     }
