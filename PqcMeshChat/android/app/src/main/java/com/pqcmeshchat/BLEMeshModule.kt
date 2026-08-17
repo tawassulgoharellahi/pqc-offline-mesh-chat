@@ -556,9 +556,9 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         if (rawBytes != null) {
             val rawString = String(rawBytes, Charsets.ISO_8859_1)
             val idx = rawString.indexOf("NODE_")
-            if (idx != -1 && idx + 13 <= rawString.length) {
-                val candidate = rawString.substring(idx, idx + 13)
-                if (candidate.matches(Regex("NODE_[A-Z0-9]{8}"))) {
+            if (idx != -1) {
+                val candidate = rawString.substring(idx).take(13)
+                if (candidate.startsWith("NODE_") && candidate.length == 13) {
                     return candidate
                 }
             }
@@ -625,10 +625,18 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             val device = result.device
             val address = device.address
 
+            val rawBytes = result.scanRecord?.bytes
+            val rawStr = rawBytes?.let { String(it, Charsets.ISO_8859_1) } ?: ""
             val advertisedNode = extractNodeId(result)
             val hasOurService = result.scanRecord?.serviceUuids?.any { 
                 it.toString().contains("ff01", ignoreCase = true) 
-            } == true || result.scanRecord?.getServiceData(parcelUuid) != null
+            } == true || result.scanRecord?.getServiceData(parcelUuid) != null || rawStr.contains("NODE_")
+
+            if (rawStr.contains("NODE_") || hasOurService || advertisedNode != null) {
+                Log.i("BLEMeshModule", "MATCHED_PQC_SCAN: addr=$address, node=$advertisedNode, hasOurSvc=$hasOurService, devName=${device.name}")
+            } else {
+                Log.v("BLEMeshModule", "SCAN_HIT: addr=$address, len=${rawBytes?.size}")
+            }
 
             // Drop non-PQC beacons in software when running unfiltered on hardware with 0 filter slots
             if (advertisedNode == null && !hasOurService) {
