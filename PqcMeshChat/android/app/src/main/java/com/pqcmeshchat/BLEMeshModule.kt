@@ -516,9 +516,43 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         }
     }
 
+    private fun extractNodeId(result: ScanResult): String? {
+        val scanRecord = result.scanRecord
+
+        // 1. Direct getServiceData with parcelUuid
+        val directData = scanRecord?.getServiceData(parcelUuid)
+        if (directData != null && directData.isNotEmpty()) {
+            val str = String(directData, Charsets.UTF_8)
+            if (str.startsWith("NODE_")) return str
+        }
+
+        // 2. Iterate all service data entries in map
+        if (scanRecord != null) {
+            for ((_, dataBytes) in scanRecord.serviceData) {
+                if (dataBytes != null && dataBytes.isNotEmpty()) {
+                    val str = String(dataBytes, Charsets.UTF_8)
+                    if (str.startsWith("NODE_")) return str
+                }
+            }
+        }
+
+        // 3. Check scanRecord deviceName or device.name
+        val scanDevName = scanRecord?.deviceName
+        if (scanDevName != null && scanDevName.startsWith("NODE_")) return scanDevName
+
+        val devName = result.device.name
+        if (devName != null && devName.startsWith("NODE_")) return devName
+
+        return null
+    }
+
     private fun startAdvertisingInternal(): Boolean {
         val advertiser = bluetoothAdapter?.bluetoothLeAdvertiser ?: return false
         ensureGattServerOpen()
+
+        try {
+            bluetoothAdapter?.name = getLocalNodeId()
+        } catch (e: Exception) {}
 
         try {
             advertiser.stopAdvertising(advertiseCallback)
@@ -531,12 +565,12 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             .build()
 
         val data = AdvertiseData.Builder()
-            .setIncludeDeviceName(false)
+            .setIncludeDeviceName(true)
             .addServiceUuid(parcelUuid)
             .build()
 
         val scanResponse = AdvertiseData.Builder()
-            .setIncludeDeviceName(false)
+            .setIncludeDeviceName(true)
             .addServiceData(parcelUuid, getLocalNodeId().toByteArray(Charsets.UTF_8))
             .build()
 
@@ -550,8 +584,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             val device = result.device
             val address = device.address
 
-            val serviceData = result.scanRecord?.getServiceData(parcelUuid)
-            val advertisedNode = if (serviceData != null) String(serviceData, Charsets.UTF_8) else null
+            val advertisedNode = extractNodeId(result)
             val name = advertisedNode ?: device.name ?: result.scanRecord?.deviceName ?: "PQC Node (${address.takeLast(5)})"
 
             if (name == getLocalNodeId() || (advertisedNode != null && advertisedNode == getLocalNodeId())) {
@@ -562,6 +595,9 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             discoveredPeers[address] = name
             if (advertisedNode != null && advertisedNode.startsWith("NODE_")) {
                 nodeToMacMap[advertisedNode] = address
+            }
+            if (name.startsWith("NODE_")) {
+                nodeToMacMap[name] = address
             }
 
             if (isNew) {
@@ -969,22 +1005,28 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 val quickCallback = object : ScanCallback() {
                     override fun onScanResult(callbackType: Int, result: ScanResult) {
                         val addr = result.device.address
-                        val serviceData = result.scanRecord?.getServiceData(parcelUuid)
-                        val advertisedNode = if (serviceData != null) String(serviceData, Charsets.UTF_8) else null
-                        if (advertisedNode != null && advertisedNode.startsWith("NODE_")) {
-                            nodeToMacMap[advertisedNode] = addr
-                            discoveredPeers[addr] = advertisedNode
-                            if (isPeerMatch(advertisedNode, deviceAddress)) {
-                                targetMac = addr
-                                latch.countDown()
-                            }
+                        val node = extractNodeId(result)
+                        val name = node ?: result.device.name ?: result.scanRecord?.deviceName ?: ""
+
+                        if (node != null && node.startsWith("NODE_")) {
+                            nodeToMacMap[node] = addr
+                            discoveredPeers[addr] = node
+                        }
+                        if (name.startsWith("NODE_")) {
+                            nodeToMacMap[name] = addr
+                            discoveredPeers[addr] = name
+                        }
+
+                        if (isPeerMatch(name, deviceAddress) || isPeerMatch(node, deviceAddress) || (isValidTargetMac(deviceAddress) && addr.equals(deviceAddress, ignoreCase = true))) {
+                            targetMac = addr
+                            latch.countDown()
                         }
                     }
                 }
                 try {
                     val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
                     scanner.startScan(null, settings, quickCallback)
-                    latch.await(1500, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    latch.await(3000, java.util.concurrent.TimeUnit.MILLISECONDS)
                     try { scanner.stopScan(quickCallback) } catch (e: Exception) {}
                 } catch (e: Exception) {
                     Log.w("BLEMeshModule", "Fast scan error: ${e.message}")
