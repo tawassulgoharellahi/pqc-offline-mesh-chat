@@ -679,13 +679,6 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             bleScanner?.stopScan(scanCallback)
         } catch (e: Exception) {}
 
-        val supportsHwFiltering = bluetoothAdapter?.isOffloadedFilteringSupported() == true
-        val filters = if (supportsHwFiltering) {
-            listOf(ScanFilter.Builder().setServiceUuid(parcelUuid).build())
-        } else {
-            emptyList()
-        }
-
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .setReportDelay(0)
@@ -693,11 +686,11 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
         try {
             bluetoothAdapter?.bluetoothLeScanner?.startScan(
-                filters,
+                emptyList(),
                 settings,
                 scanCallback
             )
-            Log.i("BLEMeshModule", "Peer discovery started (hwFilter=$supportsHwFiltering)")
+            Log.i("BLEMeshModule", "Peer discovery started (software filtering enabled)")
             promise?.resolve("BLE Scan Started")
         } catch (e: Exception) {
             Log.e("BLEMeshModule", "Peer discovery startScan error: ${e.message}")
@@ -1126,14 +1119,8 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     }
                 }
                 try {
-                    val supportsHwFiltering = bluetoothAdapter?.isOffloadedFilteringSupported() == true
-                    val filters = if (supportsHwFiltering) {
-                        listOf(ScanFilter.Builder().setServiceUuid(parcelUuid).build())
-                    } else {
-                        emptyList()
-                    }
                     val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
-                    scanner.startScan(filters, settings, quickCallback)
+                    scanner.startScan(emptyList(), settings, quickCallback)
                     latch.await(3000, java.util.concurrent.TimeUnit.MILLISECONDS)
                     try { scanner.stopScan(quickCallback) } catch (e: Exception) {}
                 } catch (e: Exception) {
