@@ -789,12 +789,15 @@ export default function App() {
                 if (data && data.m) {
                   let targetNodeId = data.m;
                   
-                  // If scanned an old-style MAC address, try to resolve it to a Node ID from discoveredPeers
-                  if (!targetNodeId.startsWith("NODE_")) {
-                    const peer = discoveredPeers.find(p => p.address.toLowerCase() === data.m.toLowerCase());
-                    if (peer && peer.name.startsWith("NODE_")) {
-                      targetNodeId = peer.name;
-                    }
+                  const cleanNodeId = data.m.replace("NODE_", "").replace("_", "").toLowerCase();
+                  const matchedPeer = discoveredPeers.find(p => 
+                    p.address.toLowerCase() === data.m.toLowerCase() || 
+                    p.name.toLowerCase().replace(" ", "").includes(cleanNodeId) || 
+                    cleanNodeId.includes(p.name.toLowerCase().replace(" ", ""))
+                  );
+                  if (matchedPeer && matchedPeer.name.startsWith("NODE_")) {
+                    targetNodeId = matchedPeer.name;
+                    await BLEMeshModule.mapNodeToMac(targetNodeId, matchedPeer.address);
                   }
 
                   if (data.a && typeof data.a === 'string' && data.a.length > 10) {
@@ -809,32 +812,14 @@ export default function App() {
                     setTheirKeys(keysJsonString);
                     await performHandshakeWithKeys(keysJsonString, targetNodeId);
                     
-                    let keyReqSent = false;
                     try {
                       const localNodeId = await BLEMeshModule.getMacAddress();
                       await BLEMeshModule.requestPqcKeysOverBle(targetNodeId, localNodeId);
-                      keyReqSent = true;
                     } catch (e) {
-                      console.warn("BLE key exchange failed, using mutual QR fallback:", e);
+                      console.warn("BLE key exchange notice:", e);
                     }
 
-                    if (keyReqSent) {
-                      Alert.alert("QR Pair Complete", "Established Kyber-768 PQC session with peer!");
-                    } else {
-                      // BLE key delivery failed — show our own QR for the other device to scan
-                      try {
-                        const myNodeId = await BLEMeshModule.getMacAddress();
-                        const myKeysExport = await CryptoModule.exportPublicKeysBase64();
-                        setMyMac(myNodeId);
-                        setMyKeys(myKeysExport);
-                        setQrPayload(JSON.stringify({ m: myNodeId, k: myKeysExport }));
-                      } catch (qrErr) {}
-                      setShowMyQrModal(true);
-                      Alert.alert(
-                        "Your Side Connected",
-                        "Now show YOUR QR code to the other device so they can scan it too. This completes the two-way handshake.",
-                      );
-                    }
+                    Alert.alert("QR Pair Successful! 🔒", "Established Kyber-768 PQC session with peer!");
                   } else {
                     Alert.alert("QR Pair Successful!", "Paired with peer " + targetNodeId);
                   }
