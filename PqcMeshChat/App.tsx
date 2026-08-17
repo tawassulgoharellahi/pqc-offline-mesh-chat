@@ -770,6 +770,7 @@ export default function App() {
                   }
                   
                   setTargetDevice(resolvedMac);
+                  await CryptoModule.setTargetDevice(resolvedMac);
 
                   if (data.k) {
                     const keysJsonString = typeof data.k === 'string' ? data.k : JSON.stringify(data.k);
@@ -782,12 +783,6 @@ export default function App() {
                     } catch (e) {
                       console.warn("Error requesting keys back:", e);
                     }
-                  }
-
-                  try {
-                    await connectToPeer(resolvedMac);
-                  } catch (e) {
-                    console.warn("BLE connect error:", e);
                   }
 
                   Alert.alert("QR Pair Successful! 🔒", "Established Kyber-768 PQC session with peer!");

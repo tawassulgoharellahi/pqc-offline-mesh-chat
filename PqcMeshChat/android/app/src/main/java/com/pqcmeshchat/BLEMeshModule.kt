@@ -869,6 +869,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         val chunks = chunkingEngine.splitMessage(rawBytes, 5.toUByte()).map { serializeChunk(it) }
 
         var chunkIdx = 0
+        var retryCount = 0
         fun writeNext() {
             if (chunkIdx < chunks.size) {
                 val chunkData = chunks[chunkIdx]
@@ -877,10 +878,17 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 val ok = gatt.writeCharacteristic(characteristic)
                 if (ok) {
                     chunkIdx++
-                    mainHandler.postDelayed({ writeNext() }, 40)
+                    retryCount = 0
+                    mainHandler.postDelayed({ writeNext() }, 45)
                 } else {
-                    Log.w("BLEMeshModule", "writeCharacteristic returned false on chunk $chunkIdx")
-                    onResult?.invoke(false)
+                    if (retryCount < 8) {
+                        retryCount++
+                        Log.w("BLEMeshModule", "writeCharacteristic busy on chunk $chunkIdx, retry $retryCount in 50ms")
+                        mainHandler.postDelayed({ writeNext() }, 50)
+                    } else {
+                        Log.e("BLEMeshModule", "writeCharacteristic failed after retries on chunk $chunkIdx")
+                        onResult?.invoke(false)
+                    }
                 }
             } else {
                 Log.i("BLEMeshModule", "Delivered ${chunks.size} chunks to $targetMac over persistent link!")
