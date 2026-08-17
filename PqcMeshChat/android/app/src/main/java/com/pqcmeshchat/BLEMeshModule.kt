@@ -595,18 +595,36 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             .setConnectable(true)
             .build()
 
+        // Primary data: service UUID (for scan filter matching) + device name (NODE_XXXXXXXX)
         val data = AdvertiseData.Builder()
-            .setIncludeDeviceName(false)
+            .setIncludeDeviceName(true)
             .setIncludeTxPowerLevel(false)
-            .addServiceData(parcelUuid, getLocalNodeId().toByteArray(Charsets.UTF_8))
-            .build()
-
-        val scanResponse = AdvertiseData.Builder()
-            .setIncludeDeviceName(false)
             .addServiceUuid(parcelUuid)
             .build()
 
-        advertiser.startAdvertising(settings, data, scanResponse, advertiseCallback)
+        // Scan response: service data carrying the node ID as bytes
+        val scanResponse = AdvertiseData.Builder()
+            .setIncludeDeviceName(false)
+            .addServiceData(parcelUuid, getLocalNodeId().toByteArray(Charsets.UTF_8))
+            .build()
+
+        try {
+            advertiser.startAdvertising(settings, data, scanResponse, advertiseCallback)
+        } catch (e: Exception) {
+            // Fallback: scanResponse may be too large on some devices, try without it
+            Log.w("BLEMeshModule", "Advertising with scanResponse failed, trying without: ${e.message}")
+            try {
+                val fallbackData = AdvertiseData.Builder()
+                    .setIncludeDeviceName(true)
+                    .setIncludeTxPowerLevel(false)
+                    .addServiceUuid(parcelUuid)
+                    .build()
+                advertiser.startAdvertising(settings, fallbackData, advertiseCallback)
+            } catch (e2: Exception) {
+                Log.e("BLEMeshModule", "Advertising fallback also failed: ${e2.message}")
+                return false
+            }
+        }
         return true
     }
 
@@ -1028,7 +1046,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
         var targetMac = resolveTargetMac(deviceAddress)
 
-        // If targetMac is not found in cache yet, perform a fast active LE scan for up to 1.5s
+        // If targetMac is not found in cache yet, perform a fast active LE scan for up to 3s
         if (targetMac == null) {
             Log.i("BLEMeshModule", "Target $deviceAddress not in cache, performing fast discovery scan...")
             val scanner = bluetoothAdapter?.bluetoothLeScanner
@@ -1047,6 +1065,17 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                         if (name.startsWith("NODE_")) {
                             nodeToMacMap[name] = addr
                             discoveredPeers[addr] = name
+                        }
+
+                        // Also track any peer with our service UUID for broadcast fallback
+                        val hasOurService = result.scanRecord?.serviceUuids?.any { 
+                            it.toString().equals(parcelUuid.toString(), ignoreCase = true) 
+                        } == true
+                        val hasOurData = result.scanRecord?.getServiceData(parcelUuid) != null
+                        if (hasOurService || hasOurData) {
+                            if (!discoveredPeers.containsKey(addr)) {
+                                discoveredPeers[addr] = name.ifEmpty { "PQC_PEER" }
+                            }
                         }
 
                         if (isPeerMatch(name, deviceAddress) || isPeerMatch(node, deviceAddress) || (isValidTargetMac(deviceAddress) && addr.equals(deviceAddress, ignoreCase = true))) {
@@ -1070,20 +1099,54 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             targetMac = resolveTargetMac(deviceAddress)
         }
 
-        if (targetMac == null || !isValidTargetMac(targetMac)) {
-            Log.e("BLEMeshModule", "Could not resolve valid Bluetooth MAC for $deviceAddress")
-            promise.reject("KEY_REQ_FAILED", "Could not resolve live Bluetooth address for $deviceAddress")
+        if (targetMac != null && isValidTargetMac(targetMac)) {
+            Log.i("BLEMeshModule", "requestPqcKeysOverBle connecting to $targetMac for $deviceAddress")
+            sendMessageDirect(targetMac!!, reqJson) { success ->
+                if (success) {
+                    promise.resolve("KEY_REQ_SENT")
+                } else {
+                    promise.reject("KEY_REQ_FAILED", "Could not connect to peer")
+                }
+            }
             return
         }
 
-        Log.i("BLEMeshModule", "requestPqcKeysOverBle connecting to $targetMac for $deviceAddress")
-        sendMessageDirect(targetMac!!, reqJson) { success ->
-            if (success) {
-                promise.resolve("KEY_REQ_SENT")
-            } else {
-                promise.reject("KEY_REQ_FAILED", "Could not connect to peer")
+        // === BROADCAST FALLBACK ===
+        // Could not resolve specific MAC. Send KEY_REQ to ALL discovered PQC peers.
+        // Only the correct peer will process and respond; others will safely ignore.
+        val candidateMacs = discoveredPeers.entries.filter { (mac, name) ->
+            isValidTargetMac(mac) && mac != "02:00:00:00:00:00" &&
+            (name.startsWith("NODE_") || name.startsWith("PQC") || name.contains("PQC"))
+        }.map { it.key }.toList()
+
+        Log.i("BLEMeshModule", "MAC resolution failed for $deviceAddress. Broadcasting KEY_REQ to ${candidateMacs.size} candidate peers...")
+
+        if (candidateMacs.isEmpty()) {
+            promise.reject("KEY_REQ_FAILED", "No discovered peers to broadcast KEY_REQ to")
+            return
+        }
+
+        var sentAny = false
+        val broadcastLatch = java.util.concurrent.CountDownLatch(candidateMacs.size)
+
+        for (mac in candidateMacs) {
+            sendMessageDirect(mac, reqJson) { success ->
+                if (success) {
+                    sentAny = true
+                    Log.i("BLEMeshModule", "KEY_REQ broadcast delivered to $mac")
+                }
+                broadcastLatch.countDown()
             }
         }
+
+        Thread {
+            broadcastLatch.await(15, java.util.concurrent.TimeUnit.SECONDS)
+            if (sentAny) {
+                promise.resolve("KEY_REQ_BROADCAST_SENT")
+            } else {
+                promise.reject("KEY_REQ_FAILED", "Could not deliver KEY_REQ to any peer")
+            }
+        }.start()
     }
 
     @ReactMethod

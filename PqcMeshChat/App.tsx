@@ -809,15 +809,35 @@ export default function App() {
                     setTheirKeys(keysJsonString);
                     await performHandshakeWithKeys(keysJsonString, targetNodeId);
                     
+                    let keyReqSent = false;
                     try {
                       const localNodeId = await BLEMeshModule.getMacAddress();
                       await BLEMeshModule.requestPqcKeysOverBle(targetNodeId, localNodeId);
+                      keyReqSent = true;
                     } catch (e) {
-                      console.warn("Error requesting keys back:", e);
+                      console.warn("BLE key exchange failed, using mutual QR fallback:", e);
                     }
-                  }
 
-                  Alert.alert("QR Pair Successful! 🔒", "Established Kyber-768 PQC session with peer!");
+                    if (keyReqSent) {
+                      Alert.alert("QR Pair Complete", "Established Kyber-768 PQC session with peer!");
+                    } else {
+                      // BLE key delivery failed — show our own QR for the other device to scan
+                      try {
+                        const myNodeId = await BLEMeshModule.getMacAddress();
+                        const myKeysExport = await CryptoModule.exportPublicKeysBase64();
+                        setMyMac(myNodeId);
+                        setMyKeys(myKeysExport);
+                        setQrPayload(JSON.stringify({ m: myNodeId, k: myKeysExport }));
+                      } catch (qrErr) {}
+                      setShowMyQrModal(true);
+                      Alert.alert(
+                        "Your Side Connected",
+                        "Now show YOUR QR code to the other device so they can scan it too. This completes the two-way handshake.",
+                      );
+                    }
+                  } else {
+                    Alert.alert("QR Pair Successful!", "Paired with peer " + targetNodeId);
+                  }
                 } else {
                   Alert.alert("QR Read Notice", scannedValue);
                 }
