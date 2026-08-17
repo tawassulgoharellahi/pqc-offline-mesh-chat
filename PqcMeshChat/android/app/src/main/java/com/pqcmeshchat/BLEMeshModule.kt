@@ -677,7 +677,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             bleScanner?.stopScan(scanCallback)
         } catch (e: Exception) {}
         val filter = ScanFilter.Builder()
-            .setServiceUuid(parcelUuid)
+            .setManufacturerData(0xFFFF, null)
             .build()
 
         val settings = ScanSettings.Builder()
@@ -690,7 +690,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 settings,
                 scanCallback
             )
-            Log.i("BLEMeshModule", "Peer discovery started with Service UUID filter")
+            Log.i("BLEMeshModule", "Peer discovery started with Manufacturer Data filter")
             promise?.resolve("BLE Scan Started")
         } catch (e: Exception) {
             promise?.reject("SCAN_ERROR", e.message)
