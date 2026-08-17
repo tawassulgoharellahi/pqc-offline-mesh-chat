@@ -676,18 +676,21 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         try {
             bleScanner?.stopScan(scanCallback)
         } catch (e: Exception) {}
+        val filter = ScanFilter.Builder()
+            .setServiceUuid(parcelUuid)
+            .build()
+
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
 
         try {
-            // Use empty filter list to bypass buggy hardware filters on Android 10
             bluetoothAdapter?.bluetoothLeScanner?.startScan(
-                emptyList(),
+                listOf(filter),
                 settings,
                 scanCallback
             )
-            Log.i("BLEMeshModule", "Peer discovery started with empty hardware filters")
+            Log.i("BLEMeshModule", "Peer discovery started with Service UUID filter")
             promise?.resolve("BLE Scan Started")
         } catch (e: Exception) {
             promise?.reject("SCAN_ERROR", e.message)
