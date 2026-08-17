@@ -566,12 +566,10 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
 
         val data = AdvertiseData.Builder()
             .setIncludeDeviceName(true)
-            .addServiceUuid(parcelUuid)
             .build()
 
         val scanResponse = AdvertiseData.Builder()
-            .setIncludeDeviceName(true)
-            .addServiceData(parcelUuid, getLocalNodeId().toByteArray(Charsets.UTF_8))
+            .addServiceUuid(parcelUuid)
             .build()
 
         advertiser.startAdvertising(settings, data, scanResponse, advertiseCallback)
