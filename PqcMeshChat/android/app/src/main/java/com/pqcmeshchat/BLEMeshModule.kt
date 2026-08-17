@@ -606,7 +606,6 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         val data = AdvertiseData.Builder()
             .setIncludeDeviceName(false)
             .setIncludeTxPowerLevel(false)
-            .addServiceUuid(parcelUuid)
             .addManufacturerData(0xFFFF, getLocalNodeId().toByteArray(Charsets.UTF_8))
             .build()
 
@@ -619,7 +618,6 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 val fallbackData = AdvertiseData.Builder()
                     .setIncludeDeviceName(false)
                     .setIncludeTxPowerLevel(false)
-                    .addServiceUuid(parcelUuid)
                     .addManufacturerData(0xFFFF, getLocalNodeId().toByteArray(Charsets.UTF_8))
                     .build()
                 advertiser.startAdvertising(settings, fallbackData, advertiseCallback)
