@@ -910,8 +910,8 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
     }
 
     @ReactMethod
-    fun sendMessageToDevice(deviceAddress: String, message: String, senderMacAddress: String, promise: Promise) {
-        val msgId = UUID.randomUUID().toString()
+    fun sendMessageToDevice(deviceAddress: String, message: String, senderMacAddress: String, clientMsgId: String?, promise: Promise) {
+        val msgId = if (!clientMsgId.isNullOrEmpty()) clientMsgId else UUID.randomUUID().toString()
         val sender = if (senderMacAddress.isNotEmpty()) senderMacAddress else getLocalNodeId()
 
         // Enqueue atomically to on-disk FIFO database
