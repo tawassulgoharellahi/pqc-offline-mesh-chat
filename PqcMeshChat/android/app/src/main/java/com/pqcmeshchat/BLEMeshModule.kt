@@ -642,15 +642,31 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
      * Resolves a target node ID or alias into a valid, active Bluetooth MAC address.
      */
     private fun resolveTargetMac(target: String): String? {
-        if (isValidTargetMac(target)) return target
+        if (target.startsWith("NODE_")) {
+            nodeToMacMap[target]?.let { if (isValidTargetMac(it)) return it }
 
-        nodeToMacMap[target]?.let { if (isValidTargetMac(it)) return it }
+            discoveredPeers.entries.firstOrNull { isPeerMatch(it.value, target) }?.key?.let {
+                if (isValidTargetMac(it)) return it
+            }
+            return null
+        }
+
+        if (isValidTargetMac(target)) {
+            val nodeId = discoveredPeers[target]
+            if (nodeId != null && nodeId.startsWith("NODE_")) {
+                val latestMac = nodeToMacMap[nodeId]
+                if (latestMac != null && isValidTargetMac(latestMac)) {
+                    return latestMac
+                }
+            }
+            return target
+        }
 
         discoveredPeers.entries.firstOrNull { isPeerMatch(it.value, target) || isPeerMatch(it.key, target) }?.key?.let {
             if (isValidTargetMac(it)) return it
         }
 
-        return discoveredPeers.keys.firstOrNull { isValidTargetMac(it) }
+        return null
     }
 
     private fun isPeerMatch(scanName: String?, targetAddress: String): Boolean {
@@ -801,6 +817,13 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     connectionPool.remove(targetMac)
                     connectionStateMap.remove(targetMac)
                     try { gatt.close() } catch (e: Exception) {}
+
+                    if (status != BluetoothGatt.GATT_SUCCESS) {
+                        discoveredPeers.remove(targetMac)
+                        nodeToMacMap.values.removeIf { it == targetMac }
+                        Log.w("BLEMeshModule", "GATT failure ($status) on $targetMac: Removed stale MAC mapping, restarting scanner")
+                        mainHandler.post { startPeerDiscovery() }
+                    }
                     safeResult(false)
                 }
             }
