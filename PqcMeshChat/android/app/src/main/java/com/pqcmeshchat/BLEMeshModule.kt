@@ -774,14 +774,30 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         }
 
         val gattCallback = object : BluetoothGattCallback() {
+            private var mtuOrDiscoveryStarted = false
+
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                 connectionStateMap[targetMac] = newState
                 Log.i("BLEMeshModule", "Persistent GATT [$targetMac] state=$newState, status=$status")
 
                 if (status == BluetoothGatt.GATT_SUCCESS && newState == BluetoothProfile.STATE_CONNECTED) {
                     connectionPool[targetMac] = gatt
-                    gatt.requestMtu(517)
-                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    mtuOrDiscoveryStarted = false
+                    mainHandler.postDelayed({
+                        try {
+                            gatt.requestMtu(517)
+                        } catch (e: Exception) {
+                            gatt.discoverServices()
+                        }
+                    }, 50)
+                    // Fallback to discoverServices if MTU doesn't callback within 350ms
+                    mainHandler.postDelayed({
+                        if (!mtuOrDiscoveryStarted) {
+                            mtuOrDiscoveryStarted = true
+                            try { gatt.discoverServices() } catch (e: Exception) {}
+                        }
+                    }, 350)
+                } else {
                     connectionPool.remove(targetMac)
                     connectionStateMap.remove(targetMac)
                     try { gatt.close() } catch (e: Exception) {}
@@ -790,10 +806,15 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             }
 
             override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-                gatt.discoverServices()
+                Log.i("BLEMeshModule", "MTU changed to $mtu, status=$status for $targetMac")
+                mtuOrDiscoveryStarted = true
+                mainHandler.postDelayed({
+                    try { gatt.discoverServices() } catch (e: Exception) {}
+                }, 50)
             }
 
             override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+                Log.i("BLEMeshModule", "Services discovered on $targetMac, status=$status")
                 if (status == BluetoothGatt.GATT_SUCCESS) {
                     connectionPool[targetMac] = gatt
                     connectionStateMap[targetMac] = BluetoothProfile.STATE_CONNECTED
@@ -806,9 +827,9 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             }
         }
 
-        Log.i("BLEMeshModule", "Opening persistent GATT to $targetMac (autoConnect=true)...")
+        Log.i("BLEMeshModule", "Opening persistent GATT to $targetMac (direct connection)...")
         mainHandler.post {
-            val gatt = device.connectGatt(reactApplicationContext, true, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            val gatt = device.connectGatt(reactApplicationContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
             if (gatt != null) {
                 connectionPool[targetMac] = gatt
             }
