@@ -544,7 +544,20 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             if (str.startsWith("NODE_")) return str
         }
 
-        // 2. Iterate all service data entries in map
+        // 2. Scan raw byte array for "NODE_" prefix (100% robust cross-Android parser)
+        val rawBytes = scanRecord?.bytes
+        if (rawBytes != null) {
+            val rawString = String(rawBytes, Charsets.ISO_8859_1)
+            val idx = rawString.indexOf("NODE_")
+            if (idx != -1 && idx + 13 <= rawString.length) {
+                val candidate = rawString.substring(idx, idx + 13)
+                if (candidate.matches(Regex("NODE_[A-Z0-9]{8}"))) {
+                    return candidate
+                }
+            }
+        }
+
+        // 3. Iterate all service data entries in map
         if (scanRecord != null) {
             for ((_, dataBytes) in scanRecord.serviceData) {
                 if (dataBytes != null && dataBytes.isNotEmpty()) {
@@ -554,7 +567,7 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             }
         }
 
-        // 3. Check scanRecord deviceName or device.name
+        // 4. Check scanRecord deviceName or device.name
         val scanDevName = scanRecord?.deviceName
         if (scanDevName != null && scanDevName.startsWith("NODE_")) return scanDevName
 
