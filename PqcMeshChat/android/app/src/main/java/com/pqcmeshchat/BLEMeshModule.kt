@@ -818,9 +818,11 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 if (status == BluetoothGatt.GATT_SUCCESS) {
                     connectionPool[targetMac] = gatt
                     connectionStateMap[targetMac] = BluetoothProfile.STATE_CONNECTED
-                    writePayloadToGatt(gatt, targetMac, messagePayload) { delivered ->
-                        safeResult(delivered)
-                    }
+                    mainHandler.postDelayed({
+                        writePayloadToGatt(gatt, targetMac, messagePayload) { delivered ->
+                            safeResult(delivered)
+                        }
+                    }, 100)
                 } else {
                     safeResult(false)
                 }
@@ -846,18 +848,25 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         } ?: service?.getCharacteristic(CHAR_UUID)
 
         if (service == null || characteristic == null) {
-            Log.w("BLEMeshModule", "Service or Characteristic not found on $targetMac, discovering services...")
-            gatt.discoverServices()
-            onResult?.invoke(false)
+            Log.w("BLEMeshModule", "Service or Characteristic not found on $targetMac, rediscovering...")
+            mainHandler.postDelayed({
+                val retryService = gatt.services?.firstOrNull {
+                    it.uuid == SERVICE_UUID || it.uuid.toString().contains("ff01", ignoreCase = true)
+                } ?: gatt.getService(SERVICE_UUID)
+                val retryChar = retryService?.characteristics?.firstOrNull {
+                    it.uuid == CHAR_UUID || it.uuid.toString().contains("ff02", ignoreCase = true)
+                } ?: retryService?.getCharacteristic(CHAR_UUID)
+                if (retryService != null && retryChar != null) {
+                    writePayloadToGatt(gatt, targetMac, payload, onResult)
+                } else {
+                    onResult?.invoke(false)
+                }
+            }, 200)
             return
         }
 
         val rawBytes = payload.toByteArray(Charsets.UTF_8)
-        val chunks = if (rawBytes.size <= 480) {
-            listOf(rawBytes)
-        } else {
-            chunkingEngine.splitMessage(rawBytes, 5.toUByte()).map { serializeChunk(it) }
-        }
+        val chunks = chunkingEngine.splitMessage(rawBytes, 5.toUByte()).map { serializeChunk(it) }
 
         var chunkIdx = 0
         fun writeNext() {
@@ -868,8 +877,9 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 val ok = gatt.writeCharacteristic(characteristic)
                 if (ok) {
                     chunkIdx++
-                    mainHandler.postDelayed({ writeNext() }, 20)
+                    mainHandler.postDelayed({ writeNext() }, 40)
                 } else {
+                    Log.w("BLEMeshModule", "writeCharacteristic returned false on chunk $chunkIdx")
                     onResult?.invoke(false)
                 }
             } else {
