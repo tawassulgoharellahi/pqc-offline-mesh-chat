@@ -808,11 +808,6 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                 fifoDb.cleanupOldMessages()
                 var pending = fifoDb.peekOldestPending()
                 while (pending != null) {
-                    val targetMac = resolveTargetMac(pending.dest)
-                    if (targetMac == null) {
-                        break // Target is currently offline, wait for scan detection
-                    }
-
                     val envelope = JSONObject().apply {
                         put("type", "MSG")
                         put("dest", pending.dest)
@@ -823,21 +818,48 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
                     }.toString()
 
                     fifoDb.markInFlight(pending.msgId)
-                    val latch = java.util.concurrent.CountDownLatch(1)
                     var sendSuccess = false
+                    val targetMac = resolveTargetMac(pending.dest)
 
-                    sendMessageDirect(targetMac, envelope) { delivered ->
-                        sendSuccess = delivered
-                        if (delivered) {
-                            fifoDb.markDelivered(pending!!.msgId)
-                        } else {
-                            fifoDb.resetInFlightToPending()
+                    if (targetMac != null) {
+                        val latch = java.util.concurrent.CountDownLatch(1)
+                        sendMessageDirect(targetMac, envelope) { delivered ->
+                            sendSuccess = delivered
+                            latch.countDown()
                         }
-                        latch.countDown()
+                        latch.await(10, java.util.concurrent.TimeUnit.SECONDS)
+                    } else {
+                        // === BROADCAST FALLBACK FOR MESSAGES ===
+                        val candidateMacs = discoveredPeers.entries.filter { (mac, name) ->
+                            isValidTargetMac(mac) && mac != "02:00:00:00:00:00" &&
+                            (name.startsWith("NODE_") || name.startsWith("PQC") || name.contains("PQC"))
+                        }.map { it.key }.toList()
+
+                        if (candidateMacs.isEmpty()) {
+                            fifoDb.resetInFlightToPending()
+                            break // Absolutely no peers in range, stop draining
+                        }
+
+                        Log.i("BLEMeshModule", "MAC resolution failed for ${pending.dest}. Broadcasting MSG ${pending.msgId} to ${candidateMacs.size} peers...")
+                        val broadcastLatch = java.util.concurrent.CountDownLatch(candidateMacs.size)
+                        
+                        for (mac in candidateMacs) {
+                            sendMessageDirect(mac, envelope) { delivered ->
+                                if (delivered) sendSuccess = true
+                                broadcastLatch.countDown()
+                            }
+                        }
+                        broadcastLatch.await(15, java.util.concurrent.TimeUnit.SECONDS)
                     }
 
-                    latch.await(6, java.util.concurrent.TimeUnit.SECONDS)
-                    if (!sendSuccess) {
+                    if (sendSuccess) {
+                        fifoDb.markDelivered(pending.msgId)
+                        sendEvent("onMessageTransmitted", Arguments.createMap().apply {
+                            putString("msgId", pending!!.msgId)
+                            putString("status", "transmitted")
+                        })
+                    } else {
+                        fifoDb.resetInFlightToPending()
                         break // Connection broke or peer went out of range, halt until reconnected
                     }
 
