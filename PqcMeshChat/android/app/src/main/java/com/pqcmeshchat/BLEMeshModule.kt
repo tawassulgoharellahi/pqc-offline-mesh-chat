@@ -533,10 +533,14 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         val data = AdvertiseData.Builder()
             .setIncludeDeviceName(false)
             .addServiceUuid(parcelUuid)
+            .build()
+
+        val scanResponse = AdvertiseData.Builder()
+            .setIncludeDeviceName(false)
             .addServiceData(parcelUuid, getLocalNodeId().toByteArray(Charsets.UTF_8))
             .build()
 
-        advertiser.startAdvertising(settings, data, advertiseCallback)
+        advertiser.startAdvertising(settings, data, scanResponse, advertiseCallback)
         return true
     }
 
@@ -989,7 +993,13 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
         }
 
         if (targetMac == null) {
-            targetMac = resolveTargetMac(deviceAddress) ?: deviceAddress
+            targetMac = resolveTargetMac(deviceAddress)
+        }
+
+        if (targetMac == null || !isValidTargetMac(targetMac)) {
+            Log.e("BLEMeshModule", "Could not resolve valid Bluetooth MAC for $deviceAddress")
+            promise.reject("KEY_REQ_FAILED", "Could not resolve live Bluetooth address for $deviceAddress")
+            return
         }
 
         Log.i("BLEMeshModule", "requestPqcKeysOverBle connecting to $targetMac for $deviceAddress")
