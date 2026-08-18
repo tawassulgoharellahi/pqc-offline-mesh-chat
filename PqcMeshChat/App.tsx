@@ -154,6 +154,23 @@ export default function App() {
       const macToSave = targetMacOverride || targetDevice;
       if (macToSave) {
         await CryptoModule.setTargetDevice(macToSave);
+        try {
+          await CryptoModule.saveContact({
+            nodeId: macToSave,
+            name: macToSave.replace("NODE_", "").substring(0, 6),
+            publicKeys: keysJsonString,
+            sessionMasterKey: "",
+            targetMac: macToSave,
+            isActive: true
+          });
+          const history = await CryptoModule.getChatHistory(macToSave, 100);
+          if (history && history.length > 0) {
+            setMessages(history);
+            setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: false }), 80);
+          }
+        } catch (cErr) {
+          console.warn("Contact save error:", cErr);
+        }
       }
       updateHandshakeState(true);
       console.log("Handshake success!");
@@ -173,20 +190,41 @@ export default function App() {
       setMyMac(mac);
       setQrPayload(JSON.stringify({ m: mac, k: base64Keys }));
 
-      // Restore existing PQC chat session if present
+      // Restore existing PQC chat session & active contact if present
       try {
+        let activePeer = '';
+        const activeContact = await CryptoModule.getActiveContact();
+        if (activeContact && activeContact.nodeId) {
+          activePeer = activeContact.nodeId;
+          setTargetDevice(activeContact.nodeId);
+          if (activeContact.publicKeys) setTheirKeys(activeContact.publicKeys);
+          updateHandshakeState(true);
+        }
+
         const sessionInfo = await CryptoModule.restoreSession();
         if (sessionInfo && sessionInfo.restored && sessionInfo.targetMac) {
+          activePeer = sessionInfo.targetMac;
           setTargetDevice(sessionInfo.targetMac);
           updateHandshakeState(true);
           console.log("Restored active PQC session for peer:", sessionInfo.targetMac);
+        }
 
-          // Load messages that arrived while the app was closed.
-          // getPendingMessages() reads-then-clears atomically so they never show twice.
+        if (activePeer) {
+          // 1. Load persistent chat history from on-disk SQLite
+          try {
+            const history = await CryptoModule.getChatHistory(activePeer, 100);
+            if (history && history.length > 0) {
+              setMessages(history);
+              setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: false }), 120);
+            }
+          } catch (hErr) {
+            console.warn("History load error:", hErr);
+          }
+
+          // 2. Load messages that arrived while the app was closed.
           try {
             const pending = await CryptoModule.getPendingMessages();
             if (pending && pending.length > 0) {
-              const restored: Message[] = [];
               for (const item of pending) {
                 try {
                   let text = item.payload;
@@ -195,19 +233,19 @@ export default function App() {
                   } catch (_) {}
                   const d = new Date(item.timestamp);
                   const timeStr = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-                  restored.push({
+                  const pMsg: Message = {
                     id: `pending_${item.timestamp}_${Math.random()}`,
                     sender: item.sender || 'Peer',
                     text,
                     isMine: false,
                     time: timeStr,
-                  });
+                    status: 'delivered'
+                  };
+                  await CryptoModule.saveChatMessage({ ...pMsg, peerId: activePeer, timestamp: item.timestamp });
+                  setMessages(prev => [...prev, pMsg]);
                 } catch (_) {}
               }
-              if (restored.length > 0) {
-                setMessages(prev => [...restored, ...prev]);
-                setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: false }), 120);
-              }
+              setTimeout(() => scrollViewRef.current?.scrollToEnd({ animated: false }), 120);
             }
           } catch (pendErr) {
             console.warn("Pending messages load error:", pendErr);
@@ -255,7 +293,8 @@ export default function App() {
             const ackedMsgId = displayPayload.substring(4);
             console.log("🟢 [UI] Received ACK for msgId:", ackedMsgId);
             await BLEMeshModule.deleteOutboxMessage(ackedMsgId);
-            setMessages(prev => prev.map(msg => msg.id === ackedMsgId ? { ...msg, status: 'acked' } : msg));
+            await CryptoModule.updateChatMessageStatus(ackedMsgId, 'delivered');
+            setMessages(prev => prev.map(msg => msg.id === ackedMsgId ? { ...msg, status: 'delivered' } : msg));
             return;
         }
 
@@ -266,8 +305,6 @@ export default function App() {
                 const ackCiphertext = await CryptoModule.encryptMessage(ackPlaintext);
                 const localMac = await BLEMeshModule.getMacAddress();
                 
-                // Wait 1.75 seconds before sending the ACK to ensure the sender 
-                // is ready to receive and not busy sending more chunks.
                 setTimeout(() => {
                     BLEMeshModule.sendMessageToDevice(senderAddress || targetDevice, ackCiphertext, localMac, `ACK_${msgId}`);
                 }, 1750);
@@ -279,13 +316,31 @@ export default function App() {
         const now = new Date();
         const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
         
-        setMessages(prev => [...prev, {
+        const recvMsgObj: Message = {
           id: msgId || Math.random().toString(),
           sender: senderAddress || 'Peer',
           text: displayPayload,
           isMine: false,
-          time: timeStr
-        }]);
+          time: timeStr,
+          status: 'delivered'
+        };
+
+        try {
+          await CryptoModule.saveChatMessage({
+            id: recvMsgObj.id,
+            peerId: senderAddress || targetDevice,
+            sender: recvMsgObj.sender,
+            text: recvMsgObj.text,
+            isMine: false,
+            time: timeStr,
+            status: 'delivered',
+            timestamp: Date.now()
+          });
+        } catch (dbErr) {
+          console.warn("SQLite save received error:", dbErr);
+        }
+
+        setMessages(prev => [...prev, recvMsgObj]);
 
         setTimeout(() => {
           scrollViewRef.current?.scrollToEnd({ animated: true });
@@ -316,17 +371,19 @@ export default function App() {
       setRelayedCount(prev => prev + 1);
     });
 
-    const transmittedSub = bleEmitter?.addListener('onMessageTransmitted', (event) => {
+    const transmittedSub = bleEmitter?.addListener('onMessageTransmitted', async (event) => {
       const { msgId } = event;
       if (msgId) {
+        await CryptoModule.updateChatMessageStatus(msgId, 'transmitted');
         setMessages(prev => prev.map(msg => (msg.id === msgId && msg.status === 'queued') ? { ...msg, status: 'transmitted' } : msg));
       }
     });
 
-    const deliveredSub = bleEmitter?.addListener('onMessageDelivered', (event) => {
+    const deliveredSub = bleEmitter?.addListener('onMessageDelivered', async (event) => {
       const { msgId } = event;
       if (msgId) {
-        setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, status: 'transmitted' } : msg));
+        await CryptoModule.updateChatMessageStatus(msgId, 'delivered');
+        setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, status: 'delivered' } : msg));
       }
     });
     
@@ -392,16 +449,34 @@ export default function App() {
     const now = new Date();
     const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
 
-    // 1. Clear input & render message bubble INSTANTLY (0ms lag!)
-    setInputText('');
-    setMessages(prev => [...prev, {
+    const newMsg: Message = {
       id: msgId,
       sender: 'Me',
       text: textToSend,
       isMine: true,
       time: timeStr,
       status: 'queued'
-    }]);
+    };
+
+    // 1. Clear input & render message bubble INSTANTLY (0ms lag!)
+    setInputText('');
+    setMessages(prev => [...prev, newMsg]);
+
+    // Save to SQLite
+    try {
+      await CryptoModule.saveChatMessage({
+        id: msgId,
+        peerId: targetDevice,
+        sender: 'Me',
+        text: textToSend,
+        isMine: true,
+        time: timeStr,
+        status: 'queued',
+        timestamp: Date.now()
+      });
+    } catch (dbErr) {
+      console.warn("SQLite save outgoing error:", dbErr);
+    }
 
     setTimeout(() => {
       scrollViewRef.current?.scrollToEnd({ animated: true });
@@ -412,6 +487,7 @@ export default function App() {
       const ciphertextBase64 = await CryptoModule.encryptMessage(textToSend);
       const res = await BLEMeshModule.sendMessageToDevice(targetDevice, ciphertextBase64, myMac, msgId);
       if (res === 'DELIVERED') {
+        await CryptoModule.updateChatMessageStatus(msgId, 'transmitted');
         setMessages(prev => prev.map(msg => msg.id === msgId ? { ...msg, status: 'transmitted' } : msg));
       }
     } catch (e: any) {

@@ -7,6 +7,7 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.Promise
+import com.facebook.react.bridge.ReadableMap
 import uniffi.rust_core.*
 import android.util.Base64
 import org.json.JSONArray
@@ -266,8 +267,9 @@ class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
                 }
             } catch (e: Exception) {}
 
-            // 3. Clear all disk and cache directories
+            // 3. Clear all disk and cache directories + SQLite FIFO database
             try {
+                DiskQueueDatabase.getInstance(reactApplicationContext).clearAll()
                 reactApplicationContext.cacheDir?.deleteRecursively()
                 reactApplicationContext.codeCacheDir?.deleteRecursively()
                 reactApplicationContext.externalCacheDir?.deleteRecursively()
@@ -359,6 +361,140 @@ class CryptoModule(reactContext: ReactApplicationContext) : ReactContextBaseJava
             promise.resolve(isValid)
         } catch (e: Exception) {
             promise.resolve(false)
+        }
+    }
+
+    // ========================================================
+    // SQLITE ZERO-RAM PERSISTENCE BRIDGE (Chat & Contacts)
+    // ========================================================
+
+    @ReactMethod
+    fun saveChatMessage(map: ReadableMap, promise: Promise) {
+        try {
+            val db = DiskQueueDatabase.getInstance(reactApplicationContext)
+            val msgId = map.getString("id") ?: ""
+            val peerId = map.getString("peerId") ?: ""
+            val sender = map.getString("sender") ?: ""
+            val text = map.getString("text") ?: ""
+            val isMine = map.getBoolean("isMine")
+            val timestamp = if (map.hasKey("timestamp")) map.getDouble("timestamp").toLong() else System.currentTimeMillis()
+            val timeStr = map.getString("time") ?: ""
+            val status = map.getString("status") ?: "delivered"
+
+            val rowId = db.saveChatMessage(msgId, peerId, sender, text, isMine, timestamp, timeStr, status)
+            promise.resolve(rowId.toDouble())
+        } catch (e: Exception) {
+            promise.reject("SAVE_CHAT_ERROR", e.message)
+        }
+    }
+
+    @ReactMethod
+    fun getChatHistory(peerId: String, limit: Int, promise: Promise) {
+        try {
+            val db = DiskQueueDatabase.getInstance(reactApplicationContext)
+            val list = db.getChatMessages(peerId, if (limit > 0) limit else 100)
+            val arr = Arguments.createArray()
+            for (item in list) {
+                val map = Arguments.createMap()
+                map.putString("id", item.msgId)
+                map.putString("peerId", item.peerId)
+                map.putString("sender", item.sender)
+                map.putString("text", item.text)
+                map.putBoolean("isMine", item.isMine)
+                map.putDouble("timestamp", item.timestamp.toDouble())
+                map.putString("time", item.timeStr)
+                map.putString("status", item.status)
+                arr.pushMap(map)
+            }
+            promise.resolve(arr)
+        } catch (e: Exception) {
+            promise.resolve(Arguments.createArray())
+        }
+    }
+
+    @ReactMethod
+    fun updateChatMessageStatus(msgId: String, status: String, promise: Promise) {
+        try {
+            val db = DiskQueueDatabase.getInstance(reactApplicationContext)
+            db.updateChatMessageStatus(msgId, status)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("UPDATE_STATUS_ERROR", e.message)
+        }
+    }
+
+    @ReactMethod
+    fun saveContact(map: ReadableMap, promise: Promise) {
+        try {
+            val db = DiskQueueDatabase.getInstance(reactApplicationContext)
+            val nodeId = map.getString("nodeId") ?: ""
+            val name = map.getString("name") ?: nodeId
+            val publicKeys = if (map.hasKey("publicKeys")) map.getString("publicKeys") else null
+            val sessionMasterKey = if (map.hasKey("sessionMasterKey")) map.getString("sessionMasterKey") else null
+            val targetMac = if (map.hasKey("targetMac")) map.getString("targetMac") else null
+            val isActive = if (map.hasKey("isActive")) map.getBoolean("isActive") else false
+
+            db.saveContact(nodeId, name, publicKeys, sessionMasterKey, targetMac, isActive)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("SAVE_CONTACT_ERROR", e.message)
+        }
+    }
+
+    @ReactMethod
+    fun getContacts(promise: Promise) {
+        try {
+            val db = DiskQueueDatabase.getInstance(reactApplicationContext)
+            val list = db.getContacts()
+            val arr = Arguments.createArray()
+            for (item in list) {
+                val map = Arguments.createMap()
+                map.putString("nodeId", item.nodeId)
+                map.putString("name", item.name)
+                map.putString("publicKeys", item.publicKeys ?: "")
+                map.putString("sessionMasterKey", item.sessionMasterKey ?: "")
+                map.putString("targetMac", item.targetMac ?: "")
+                map.putDouble("lastActive", item.lastActive.toDouble())
+                map.putBoolean("isActive", item.isActive)
+                arr.pushMap(map)
+            }
+            promise.resolve(arr)
+        } catch (e: Exception) {
+            promise.resolve(Arguments.createArray())
+        }
+    }
+
+    @ReactMethod
+    fun getActiveContact(promise: Promise) {
+        try {
+            val db = DiskQueueDatabase.getInstance(reactApplicationContext)
+            val contact = db.getActiveContact()
+            if (contact != null) {
+                val map = Arguments.createMap()
+                map.putString("nodeId", contact.nodeId)
+                map.putString("name", contact.name)
+                map.putString("publicKeys", contact.publicKeys ?: "")
+                map.putString("sessionMasterKey", contact.sessionMasterKey ?: "")
+                map.putString("targetMac", contact.targetMac ?: "")
+                map.putDouble("lastActive", contact.lastActive.toDouble())
+                map.putBoolean("isActive", contact.isActive)
+                promise.resolve(map)
+            } else {
+                promise.resolve(null)
+            }
+        } catch (e: Exception) {
+            promise.resolve(null)
+        }
+    }
+
+    @ReactMethod
+    fun setActiveContact(nodeId: String, promise: Promise) {
+        try {
+            val db = DiskQueueDatabase.getInstance(reactApplicationContext)
+            db.setActiveContact(nodeId)
+            promise.resolve(true)
+        } catch (e: Exception) {
+            promise.reject("SET_ACTIVE_ERROR", e.message)
         }
     }
 }

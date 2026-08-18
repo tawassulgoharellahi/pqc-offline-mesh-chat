@@ -541,13 +541,17 @@ class BLEMeshModule(reactContext: ReactApplicationContext) : ReactContextBaseJav
             bleScanner?.stopScan(scanCallback)
         } catch (e: Exception) {}
 
-        val filters = listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build())
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
 
         try {
-            bleScanner?.startScan(filters, settings, scanCallback)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val filters = listOf(ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build())
+                bleScanner?.startScan(filters, settings, scanCallback)
+            } else {
+                bleScanner?.startScan(null, settings, scanCallback)
+            }
             promise?.resolve("BLE Scan Started")
         } catch (e: Exception) {
             promise?.reject("SCAN_ERROR", e.message)
@@ -1197,6 +1201,11 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
             val device = result.device
             val address = device.address
             val serviceData = result.scanRecord?.getServiceData(parcelUuid)
+            val hasOurService = serviceData != null || result.scanRecord?.serviceUuids?.any { it.toString().contains("ff01", ignoreCase = true) } == true
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && !hasOurService) {
+                return
+            }
+
             val name = if (serviceData != null) String(serviceData, Charsets.UTF_8) else device.name ?: "PQC Node (${address.takeLast(5)})"
 
             val isNew = !discoveredPeers.containsKey(address)
@@ -1242,7 +1251,7 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
             synchronized(storeAndForwardOutbox) { storeAndForwardOutbox.clear() }
             discoveredPeers.clear()
             
-            // Release the GATT lock forcefully and disconnect active client
+            // 1. Force disconnect & close active GATT client
             currentWatchdogRunnable?.let { mainHandler.removeCallbacks(it) }
             activeGattClient?.let { gatt ->
                 try {
@@ -1251,27 +1260,49 @@ val cleanTarget = targetAddress.replace("NODE_", "").replace("PQC Node", "").rep
                 } catch (e: Exception) {}
             }
             activeGattClient = null
+            activeGattOnComplete = null
 
             synchronized(this) {
                 isGattBusy = false
                 gattBusyStartTime = 0L
             }
 
-            // Dismiss all system notifications
+            // 2. Stop BLE Scanner
+            try {
+                bleScanner?.stopScan(scanCallback)
+            } catch (e: Exception) {}
+
+            // 3. Stop Advertiser
+            try {
+                bluetoothAdapter?.bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback)
+            } catch (e: Exception) {}
+
+            // 4. Force close and clean GATT Server
+            try {
+                gattServer?.clearServices()
+                gattServer?.close()
+            } catch (e: Exception) {}
+            gattServer = null
+
+            // 5. Dismiss all system notifications
             try {
                 val notificationManager = reactApplicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
                 notificationManager?.cancelAll()
             } catch (e: Exception) {}
 
-            // Restart advertising with clean state and new Node ID
-            try {
-                bluetoothAdapter?.bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback)
-                mainHandler.postDelayed({
-                    try { startAdvertisingInternal() } catch (e: Exception) {}
-                }, 300)
-            } catch (e: Exception) {}
+            // 6. Complete clean re-initialization of GATT Server, Advertiser, and Scanner
+            mainHandler.postDelayed({
+                try {
+                    ensureGattServerOpen()
+                    startAdvertisingInternal()
+                    startPeerDiscovery()
+                    Log.i("BLEMeshModule", "BLE hardware stack completely rebuilt after reset")
+                } catch (e: Exception) {
+                    Log.e("BLEMeshModule", "Error rebuilding BLE stack: ${e.message}")
+                }
+            }, 500)
             
-            Log.i("BLEMeshModule", "BLE Mesh cache, active GATT links, outbox, and discovered peers cleared")
+            Log.i("BLEMeshModule", "BLE Mesh cache, GATT server, active links, outbox, and discovered peers completely reset")
             promise.resolve("Mesh state reset successfully")
         } catch (e: Exception) {
             promise.reject("RESET_FAILED", e)
